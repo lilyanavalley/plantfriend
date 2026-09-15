@@ -14,7 +14,9 @@ fn main() {
     let sample = LiquidState::Absent;
 
     let _payload = if matches!(protocol, RadioProtocol::BleBTHome) {
-        Some(plantminder_core::bthome::liquid_level_advertisement(sample, false))
+        Some(plantminder_core::bthome::liquid_level_advertisement(
+            sample, false,
+        ))
     } else {
         None
     };

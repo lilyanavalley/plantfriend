@@ -53,13 +53,13 @@ Currently provides:
 From workspace root:
 
 ```sh
-cargo build --release
+cargo build --workspace --release
 ```
 
 Build a specific package:
 
 ```sh
-cargo build -p hydrolevel --release
+cargo build -p hydrolevel --target riscv32imc-esp-espidf --release
 cargo build -p nrf52-plantminder --release
 cargo build -p plantminder-core --release
 ```
@@ -67,7 +67,7 @@ cargo build -p plantminder-core --release
 ## Flashing ESP32-C3
 
 ```sh
-cargo run -p hydrolevel --release
+cargo run -p hydrolevel --target riscv32imc-esp-espidf --release
 # or
 espflash flash --monitor target/riscv32imc-esp-espidf/release/hydrolevel
 ```
