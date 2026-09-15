@@ -16,10 +16,10 @@ use esp_idf_svc::mqtt::client::{
     EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
 use log::{error, info, warn};
+use plantminder_core::sensors::LiquidState;
 use serde::Serialize;
 
 use crate::config::{Config, TlsConfig};
-use crate::sensor::LiquidState;
 
 // ── Home Assistant discovery payload ─────────────────────────────────────────
 

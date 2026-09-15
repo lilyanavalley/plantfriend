@@ -16,27 +16,9 @@ use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::gpio::{Input, PinDriver, Pull};
 use log::debug;
+use plantminder_core::sensors::LiquidState;
 
 use crate::config::SensorConfig;
-
-/// Logical state of the liquid level sensor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiquidState {
-    /// Liquid is detected at the sensor position.
-    Present,
-    /// No liquid detected.
-    Absent,
-}
-
-impl LiquidState {
-    /// Returns the Home Assistant-compatible state string.
-    pub fn as_ha_state(self) -> &'static str {
-        match self {
-            LiquidState::Present => "ON",
-            LiquidState::Absent => "OFF",
-        }
-    }
-}
 
 /// Driver for the digital capacitive liquid level sensor.
 pub struct LiquidLevelSensor<'d> {
