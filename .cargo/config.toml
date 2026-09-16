@@ -1,11 +1,36 @@
-[target.riscv32imc-esp-espidf]
+
+# [build]
+# target = "riscv32imc-esp-espidf"
+
+[target.riscv32imac-esp-espidf]
+# ldproxy forwards linker arguments to the real linker; required by esp-idf-hal.
 linker = "ldproxy"
-# Required by embuild / esp-idf-svc
+# Flash the firmware and open the serial monitor after a successful build.
+# Install with: `cargo install espflash`
 runner = "espflash flash --monitor"
 rustflags = [
+    # Enable 64-bit time_t on ESP-IDF (avoids the year-2038 problem).
     "--cfg", "espidf_time64",
 ]
 
+[target.riscv32imc-esp-espidf]
+# ldproxy forwards linker arguments to the real linker; required by esp-idf-hal.
+linker = "ldproxy"
+# Flash the firmware and open the serial monitor after a successful build.
+# Install with: `cargo install espflash`
+runner = "espflash flash --monitor"
+rustflags = [
+    # Enable 64-bit time_t on ESP-IDF (avoids the year-2038 problem).
+    "--cfg", "espidf_time64",
+]
+
+[target.x86_64-apple-darwin]
+
+# [target.x86_64-unknown-linux-gnu]
+
+[env]# ESP-IDF version that embuild will download / locate.  Tested with v5.2.x.
+ESP_IDF_VERSION = "v5.2.1"
+
 [unstable]
+# Build std + panic_abort from source for the embedded target.
 build-std = ["std", "panic_abort"]
-build-std-features = ["panic_immediate_abort"]

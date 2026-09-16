@@ -83,6 +83,14 @@ $EDITOR firmware/esp32c6/.env
 
 All `HYDROLEVEL_*` values are loaded at build time for the ESP32 package.
 
+## Flashing nRF52840
+
+```sh
+cargo run -p nrf52840 --release
+# or 
+espflash flash --monitor target/thumbv7em-none-eabihf
+```
+
 ## Notes
 
 - LoRa is represented in core protocol abstractions as a future transport.
