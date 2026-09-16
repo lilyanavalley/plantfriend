@@ -13,6 +13,8 @@
 // When no certs were configured, all entries are None.
 include!(concat!(env!("OUT_DIR"), "/certs.rs"));
 
+use plantfriend_core::sensors::DigitalInputLiquidSensorConfig;
+
 /// Top-level configuration bundle available throughout the firmware.
 pub struct Config {
     pub wifi: WifiConfig,
@@ -61,10 +63,8 @@ pub struct TlsConfig {
 pub struct SensorConfig {
     /// GPIO number wired to the sensor's OUTPUT pin.
     pub gpio_pin: u32,
-    /// If `true`, a HIGH level means liquid is *present*; otherwise LOW = present.
-    pub active_high: bool,
-    /// Debounce window in milliseconds.
-    pub debounce_ms: u64,
+    /// Shared digital-input sensor behavior used across firmware targets.
+    pub logic: DigitalInputLiquidSensorConfig,
 }
 
 /// State-publishing timing.
@@ -124,8 +124,10 @@ impl Config {
             },
             sensor: SensorConfig {
                 gpio_pin: parse_u32(env!("HYDROLEVEL_SENSOR_GPIO")),
-                active_high: parse_bool(env!("HYDROLEVEL_SENSOR_ACTIVE_HIGH")),
-                debounce_ms: parse_u64(env!("HYDROLEVEL_SENSOR_DEBOUNCE_MS")),
+                logic: DigitalInputLiquidSensorConfig {
+                    active_high: parse_bool(env!("HYDROLEVEL_SENSOR_ACTIVE_HIGH")),
+                    debounce_ms: parse_u64(env!("HYDROLEVEL_SENSOR_DEBOUNCE_MS")),
+                },
             },
             publish: PublishConfig {
                 interval_ms: parse_u64(env!("HYDROLEVEL_PUBLISH_INTERVAL_MS")),

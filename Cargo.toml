@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/plantminder-core",
-    "firmware/esp32-hydrolevel",
-    "firmware/nrf52-plantminder",
+    "crates/plantfriend-core",
+    "firmware/esp32c6",
+    "firmware/nrf52840",
 ]
-default-members = ["firmware/esp32-hydrolevel"]
+default-members = ["firmware/esp32c6"]
 
 [profile.release]
 opt-level = "s"

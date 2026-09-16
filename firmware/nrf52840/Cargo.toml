@@ -1,0 +1,18 @@
+[package]
+name = "nrf52840"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "nRF52 firmware scaffold for plantfriend sensor hub"
+
+[[bin]]
+name = "nrf52840"
+path = "src/main.rs"
+
+[features]
+default = ["bthome"]
+bthome = []
+custom-ble = []
+
+[dependencies]
+plantfriend-core = { path = "../../crates/plantfriend-core", default-features = false, features = ["chip-nrf52"] }

@@ -26,10 +26,29 @@ use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
 use log::{error, info, warn};
+use plantfriend_core::publish::{MonotonicClock, PublishReason, StatePublishPolicy};
 
 use config::Config;
 use mqtt::MqttManager;
 use sensor::LiquidLevelSensor;
+
+struct UptimeClock {
+    started_at: Instant,
+}
+
+impl UptimeClock {
+    fn new() -> Self {
+        Self {
+            started_at: Instant::now(),
+        }
+    }
+}
+
+impl MonotonicClock for UptimeClock {
+    fn now_ms(&self) -> u64 {
+        self.started_at.elapsed().as_millis() as u64
+    }
+}
 
 fn main() -> Result<()> {
     // ── ESP-IDF initialisation ────────────────────────────────────────────────
@@ -82,33 +101,39 @@ fn main() -> Result<()> {
     mqtt.publish_discovery()?;
     // Announce the device as online.
     mqtt.publish_online()?;
-    // Publish the initial sensor state so HA doesn't show "unavailable".
-    mqtt.publish_state(sensor.state())?;
 
     // ── Main event loop ───────────────────────────────────────────────────────
-    let heartbeat_interval = if cfg.publish.interval_ms > 0 {
-        Some(Duration::from_millis(cfg.publish.interval_ms))
+    let heartbeat_interval_ms = if cfg.publish.interval_ms > 0 {
+        Some(cfg.publish.interval_ms)
     } else {
         None
     };
-    let mut last_heartbeat = Instant::now();
+    let uptime_clock = UptimeClock::new();
+    let mut publish_policy =
+        StatePublishPolicy::with_clock(sensor.state(), heartbeat_interval_ms, &uptime_clock);
+
+    // Publish the initial sensor state so HA doesn't show "unavailable".
+    if let Some(initial) = publish_policy.initial_event() {
+        mqtt.publish_state(initial.state)?;
+    }
 
     info!("Entering main loop");
     loop {
         // Poll sensor for debounced state change.
         if let Some(new_state) = sensor.poll() {
-            if let Err(e) = mqtt.publish_state(new_state) {
-                error!("Failed to publish state: {e}");
+            if let Some(event) = publish_policy.on_state_change(new_state) {
+                if let Err(e) = mqtt.publish_state(event.state) {
+                    error!("Failed to publish state update ({:?}): {e}", event.reason);
+                }
             }
         }
 
         // Periodic heartbeat publish keeps HA state fresh after broker restart.
-        if let Some(interval) = heartbeat_interval {
-            if last_heartbeat.elapsed() >= interval {
-                if let Err(e) = mqtt.publish_state(sensor.state()) {
+        if let Some(event) = publish_policy.on_tick_with_clock(&uptime_clock) {
+            if matches!(event.reason, PublishReason::Heartbeat) {
+                if let Err(e) = mqtt.publish_state(event.state) {
                     warn!("Heartbeat publish failed: {e}");
                 }
-                last_heartbeat = Instant::now();
             }
         }
 

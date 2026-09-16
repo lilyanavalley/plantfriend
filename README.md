@@ -1,12 +1,12 @@
-# plantfriend / plantminder firmware workspace
+# plantfriend / plantfriend firmware workspace
 
-Modular embedded firmware workspace for a Plantminder sensor hub that targets multiple chip families while sharing a common core.
+Modular embedded firmware workspace for a plantfriend sensor hub that targets multiple chip families while sharing a common core.
 
 ## Workspace layout
 
-- `crates/plantminder-core` — chip-agnostic domain models and protocol abstractions
-- `firmware/esp32-hydrolevel` — ESP32-C3 firmware (Wi-Fi + MQTT + Home Assistant discovery)
-- `firmware/nrf52-plantminder` — nRF52 scaffold wired to the same core, with BLE mode selection
+- `crates/plantfriend-core` — chip-agnostic domain models and protocol abstractions
+- `firmware/esp32c6` — ESP32 firmware (Wi-Fi + MQTT + Home Assistant discovery)
+- `firmware/nrf52840` — nRF52 scaffold wired to the same core, with BLE mode selection
 
 ## Core goals
 
@@ -19,7 +19,7 @@ Modular embedded firmware workspace for a Plantminder sensor hub that targets mu
 
 ## Current implementation status
 
-### `plantminder-core`
+### `plantfriend-core`
 
 Includes:
 - shared liquid-level state model
@@ -30,7 +30,7 @@ Includes:
 ### ESP32 package
 
 The previous single-crate firmware now lives in:
-`/home/runner/work/plantfriend/plantfriend/firmware/esp32-hydrolevel`
+`firmware/esp32c6`
 
 Features:
 - digital capacitive liquid-level sensing
@@ -42,11 +42,11 @@ Features:
 ### nRF52 package
 
 Scaffold package:
-`/home/runner/work/plantfriend/plantfriend/firmware/nrf52-plantminder`
+`firmware/nrf52840`
 
 Currently provides:
 - feature-gated protocol selection (`bthome` default, `custom-ble` optional)
-- wiring to `plantminder-core` state + BTHome helper
+- wiring to `plantfriend-core` state + BTHome helper
 
 ## Build
 
@@ -59,17 +59,17 @@ cargo build --workspace --release
 Build a specific package:
 
 ```sh
-cargo build -p hydrolevel --target riscv32imc-esp-espidf --release
-cargo build -p nrf52-plantminder --release
-cargo build -p plantminder-core --release
+cargo build -p esp32c6 --target riscv32imc-esp-espidf --release
+cargo build -p nrf52840 --release
+cargo build -p plantfriend-core --release
 ```
 
 ## Flashing ESP32-C3
 
 ```sh
-cargo run -p hydrolevel --target riscv32imc-esp-espidf --release
+cargo run -p esp32c6 --target riscv32imc-esp-espidf --release
 # or
-espflash flash --monitor target/riscv32imc-esp-espidf/release/hydrolevel
+espflash flash --monitor target/riscv32imc-esp-espidf/release/esp32c6
 ```
 
 ## ESP32 configuration
@@ -77,8 +77,8 @@ espflash flash --monitor target/riscv32imc-esp-espidf/release/hydrolevel
 Copy and edit:
 
 ```sh
-cp firmware/esp32-hydrolevel/.env.example firmware/esp32-hydrolevel/.env
-$EDITOR firmware/esp32-hydrolevel/.env
+cp firmware/esp32c6/.env.example firmware/esp32c6/.env
+$EDITOR firmware/esp32c6/.env
 ```
 
 All `HYDROLEVEL_*` values are loaded at build time for the ESP32 package.
