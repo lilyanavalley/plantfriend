@@ -3,7 +3,7 @@ name = "nrf52840"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "nRF52 firmware scaffold for plantfriend sensor hub"
+description = "plantfriend nRF52840 firmware scaffold sensor hub"
 
 [[bin]]
 name = "nrf52840"

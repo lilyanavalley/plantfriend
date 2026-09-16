@@ -3,7 +3,7 @@ name = "esp32c6"
 version = "0.1.0"
 edition = "2021"
 authors = []
-description = "ESP32-C3 HomeAssistant-connected hydrolevel sensor node"
+description = "plantfriend ESP32-C6 HomeAssistant-connected sensor node"
 license = "MIT"
 
 [[bin]]
