@@ -81,7 +81,7 @@ cp firmware/esp32c6/.env.example firmware/esp32c6/.env
 $EDITOR firmware/esp32c6/.env
 ```
 
-All `HYDROLEVEL_*` values are loaded at build time for the ESP32 package.
+All `PLANTFRIEND_*` values are loaded at build time for the ESP32 package.
 
 ## Flashing nRF52840
 

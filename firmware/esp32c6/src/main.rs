@@ -85,10 +85,10 @@ fn main() -> Result<()> {
                 warn!("OTA update failed, continuing with current firmware: {e}");
             }
         } else {
-            warn!("HYDROLEVEL_OTA_AUTO_APPLY is true but HYDROLEVEL_OTA_URL is empty");
+            warn!("PLANTFRIEND_OTA_AUTO_APPLY is true but PLANTFRIEND_OTA_URL is empty");
         }
     } else if cfg.ota.firmware_url.is_some() {
-        info!("HYDROLEVEL_OTA_URL is configured but auto-apply is disabled");
+        info!("PLANTFRIEND_OTA_URL is configured but auto-apply is disabled");
     }
 
     // ── MQTT ──────────────────────────────────────────────────────────────────

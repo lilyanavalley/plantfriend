@@ -174,7 +174,7 @@ fn apply_tls_config(cfg: &mut MqttClientConfiguration<'_>, tls: &TlsConfig) -> R
         }
         (None, None) => {}
         _ => bail!(
-            "Both HYDROLEVEL_MQTT_CLIENT_CERT_PATH and HYDROLEVEL_MQTT_CLIENT_KEY_PATH \
+            "Both PLANTFRIEND_MQTT_CLIENT_CERT_PATH and PLANTFRIEND_MQTT_CLIENT_KEY_PATH \
              must be set together for mTLS"
         ),
     }
