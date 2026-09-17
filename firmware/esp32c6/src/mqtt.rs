@@ -16,41 +16,15 @@ use esp_idf_svc::mqtt::client::{
     EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
 use log::{error, info, warn};
-use serde::Serialize;
+use plantfriend_core::homeassistant::{
+    liquid_level_discovery_payload, liquid_level_state_payload, DeviceMetadata,
+};
+use plantfriend_core::mqtt::{
+    liquid_level_discovery_topic, AVAILABILITY_OFFLINE, AVAILABILITY_ONLINE,
+};
+use plantfriend_core::sensors::LiquidState;
 
 use crate::config::{Config, TlsConfig};
-use crate::sensor::LiquidState;
-
-// ── Home Assistant discovery payload ─────────────────────────────────────────
-
-/// HA MQTT discovery payload for a `binary_sensor` entity.
-///
-/// Only the fields used by the liquid-level sensor are present.  Additional
-/// fields can be added for future sensor types without touching the MQTT
-/// infrastructure.
-#[derive(Serialize)]
-struct HaDiscoveryPayload<'a> {
-    name: &'a str,
-    unique_id: &'a str,
-    /// HA device_class – "moisture" represents a liquid presence sensor.
-    device_class: &'a str,
-    state_topic: &'a str,
-    availability_topic: &'a str,
-    payload_on: &'static str,
-    payload_off: &'static str,
-    payload_available: &'static str,
-    payload_not_available: &'static str,
-    /// Device block groups multiple entities under one HA device entry.
-    device: HaDevice<'a>,
-}
-
-#[derive(Serialize)]
-struct HaDevice<'a> {
-    identifiers: [&'a str; 1],
-    name: &'a str,
-    model: &'static str,
-    manufacturer: &'static str,
-}
 
 // ── MQTT client wrapper ───────────────────────────────────────────────────────
 
@@ -86,7 +60,7 @@ impl MqttManager {
             // ungraceful disconnect so HA marks the device unavailable.
             lwt: Some(LwtConfiguration {
                 topic: ha.availability_topic,
-                payload: b"offline",
+                payload: AVAILABILITY_OFFLINE.as_bytes(),
                 qos: QoS::AtLeastOnce,
                 retain: true,
             }),
@@ -115,33 +89,19 @@ impl MqttManager {
         let state_topic = ha.state_topic.to_string();
         let availability_topic = ha.availability_topic.to_string();
 
-        // HA discovery topic:
-        //   homeassistant/binary_sensor/<device_id>/liquid_level/config
-        let discovery_topic = format!(
-            "{}/binary_sensor/{}/liquid_level/config",
-            ha.discovery_prefix, ha.device_id
-        );
+        let discovery_topic = liquid_level_discovery_topic(ha.discovery_prefix, ha.device_id);
 
         // ── Build HA discovery payload ────────────────────────────────────────
-        let unique_id = format!("{}_liquid_level", ha.device_id);
-        let payload_struct = HaDiscoveryPayload {
-            name: "Liquid Level",
-            unique_id: &unique_id,
-            device_class: "moisture",
-            state_topic: ha.state_topic,
-            availability_topic: ha.availability_topic,
-            payload_on: "ON",
-            payload_off: "OFF",
-            payload_available: "online",
-            payload_not_available: "offline",
-            device: HaDevice {
-                identifiers: [ha.device_id],
-                name: ha.device_name,
+        let discovery_payload = liquid_level_discovery_payload(
+            DeviceMetadata {
+                device_id: ha.device_id,
+                device_name: ha.device_name,
                 model: "XKC-Y25-NPN",
-                manufacturer: "Hydrolevel / ESP32-C3",
+                manufacturer: "Hydrolevel / ESP32",
             },
-        };
-        let discovery_payload = serde_json::to_string(&payload_struct)?;
+            ha.state_topic,
+            ha.availability_topic,
+        )?;
 
         Ok(Self {
             client,
@@ -168,15 +128,15 @@ impl MqttManager {
     pub fn publish_online(&mut self) -> Result<()> {
         let topic = self.availability_topic.clone();
         self.client
-            .enqueue(&topic, QoS::AtLeastOnce, true, b"online")?;
+            .enqueue(&topic, QoS::AtLeastOnce, true, AVAILABILITY_ONLINE.as_bytes())?;
         Ok(())
     }
 
     /// Publish the current liquid level state.
     pub fn publish_state(&mut self, state: LiquidState) -> Result<()> {
         let topic = self.state_topic.clone();
-        let payload = state.as_ha_state().as_bytes();
-        info!("Publishing state '{}' → {}", state.as_ha_state(), topic);
+        let payload = liquid_level_state_payload(state).as_bytes();
+        info!("Publishing state '{}' → {}", liquid_level_state_payload(state), topic);
         self.client
             .enqueue(&topic, QoS::AtLeastOnce, false, payload)?;
         Ok(())
@@ -214,7 +174,7 @@ fn apply_tls_config(cfg: &mut MqttClientConfiguration<'_>, tls: &TlsConfig) -> R
         }
         (None, None) => {}
         _ => bail!(
-            "Both HYDROLEVEL_MQTT_CLIENT_CERT_PATH and HYDROLEVEL_MQTT_CLIENT_KEY_PATH \
+            "Both PLANTFRIEND_MQTT_CLIENT_CERT_PATH and PLANTFRIEND_MQTT_CLIENT_KEY_PATH \
              must be set together for mTLS"
         ),
     }

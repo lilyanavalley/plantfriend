@@ -1,0 +1,34 @@
+[package]
+name = "plantfriend-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Chip-agnostic core models and interfaces for plantfriend firmware"
+
+[lib]
+name = "plantfriend_core"
+path = "src/lib.rs"
+
+[features]
+default = ["std", "framework-ble", "framework-wifi-mqtt", "sensor-digital-input"]
+std = []
+alloc = []
+
+# Framework capability flags.
+framework-ble = ["bthome"]
+framework-wifi-mqtt = ["homeassistant-mqtt"]
+
+# Chip capability presets.
+chip-esp32 = ["std", "framework-wifi-mqtt", "sensor-digital-input"]
+chip-nrf52 = ["framework-ble"]
+
+bthome = []
+sensor-digital-input = []
+homeassistant-mqtt = ["framework-wifi-mqtt-base", "dep:serde", "dep:serde_json"]
+
+# Internal foundational layer for MQTT topic and availability semantics.
+framework-wifi-mqtt-base = ["alloc"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
