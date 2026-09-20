@@ -59,17 +59,17 @@ cargo build --workspace --release
 Build a specific package:
 
 ```sh
-cargo build -p esp32c6 --target riscv32imc-esp-espidf --release
+cargo build -p esp32c6 --target riscv32imac-esp-espidf --release
 cargo build -p nrf52840 --release
 cargo build -p plantfriend-core --release
 ```
 
-## Flashing ESP32-C3
+## Flashing ESP32-C6
 
 ```sh
-cargo run -p esp32c6 --target riscv32imc-esp-espidf --release
+cargo run -p esp32c6 --target riscv32imac-esp-espidf --release
 # or
-espflash flash --monitor target/riscv32imc-esp-espidf/release/esp32c6
+espflash flash --monitor target/riscv32imac-esp-espidf/release/esp32c6
 ```
 
 ## ESP32 configuration
