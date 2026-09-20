@@ -8,21 +8,79 @@
 //  3. Run the embuild / esp-idf-svc link-time setup required for ESP-IDF.
 
 use std::env;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
     // ── 1. Load .env ─────────────────────────────────────────────────────────
-    let _ = dotenvy::from_filename(".env");
+    // Always resolve .env relative to this crate, so workspace-root builds
+    // (`cargo build -p esp32c6`) and crate-local builds behave the same.
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR missing");
+    let env_path = Path::new(&manifest_dir).join(".env");
 
-    println!("cargo:rerun-if-changed=.env");
+    // Collect build-time config vars from .env first, then let process env
+    // override them. This allows ad-hoc CI/shell overrides while still working
+    // out-of-the-box for local development.
+    let mut plantfriend_vars: BTreeMap<String, String> = BTreeMap::new();
+
+    if env_path.exists() {
+        match fs::read_to_string(&env_path) {
+            Ok(content) => {
+                for (idx, raw_line) in content.lines().enumerate() {
+                    let line = raw_line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+
+                    let Some((raw_key, raw_value)) = line.split_once('=') else {
+                        println!(
+                            "cargo:warning=ignoring malformed .env line {} in '{}'",
+                            idx + 1,
+                            env_path.display()
+                        );
+                        continue;
+                    };
+
+                    let key = raw_key.trim();
+                    if !key.starts_with("PLANTFRIEND_") {
+                        continue;
+                    }
+
+                    let mut value = raw_value.trim().to_string();
+                    if value.len() >= 2 {
+                        let first = value.as_bytes()[0] as char;
+                        let last = value.as_bytes()[value.len() - 1] as char;
+                        if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+                            value = value[1..value.len() - 1].to_string();
+                        }
+                    }
+
+                    plantfriend_vars.insert(key.to_string(), value);
+                }
+            }
+            Err(err) => {
+                println!(
+                    "cargo:warning=could not read '{}': {err}",
+                    env_path.display()
+                );
+            }
+        }
+    }
+
+    println!("cargo:rerun-if-changed={}", env_path.display());
     println!("cargo:rerun-if-changed=build.rs");
 
     // ── 2. Forward PLANTFRIEND_* env vars to rustc ─────────────────────────────
     for (key, value) in env::vars() {
         if key.starts_with("PLANTFRIEND_") {
-            println!("cargo:rustc-env={key}={value}");
+            plantfriend_vars.insert(key, value);
         }
+    }
+
+    for (key, value) in plantfriend_vars {
+        env::set_var(&key, &value);
+        println!("cargo:rustc-env={key}={value}");
     }
 
     // ── 3. Generate certs.rs in OUT_DIR ───────────────────────────────────────

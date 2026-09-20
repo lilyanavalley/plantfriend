@@ -1,6 +1,5 @@
 use anyhow::{bail, Result};
 use embedded_svc::http::{client::Client as HttpClient, Method};
-use embedded_svc::io::Read as _;
 use esp_idf_svc::hal::reset::restart;
 use esp_idf_svc::http::client::{Configuration as HttpConfiguration, EspHttpConnection};
 use esp_idf_svc::ota::EspOta;
@@ -46,5 +45,4 @@ pub fn try_update_and_reboot(url: &str) -> Result<()> {
     update.complete()?;
     info!("OTA update written successfully ({total} bytes), rebooting.");
     restart();
-    unreachable!("restart() returned unexpectedly after OTA completion");
 }

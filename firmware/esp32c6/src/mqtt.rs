@@ -155,22 +155,13 @@ fn apply_tls_config(cfg: &mut MqttClientConfiguration<'_>, tls: &TlsConfig) -> R
     if let Some(ca) = tls.ca_cert {
         // esp-idf-svc expects a null-terminated PEM or a DER blob.
         // We store the raw bytes embedded by build.rs.
-        cfg.server_certificate = Some(
-            esp_idf_svc::tls::X509::pem_until_nul(ca)
-                .map_err(|e| anyhow::anyhow!("Invalid CA certificate: {:?}", e))?,
-        );
+        cfg.server_certificate = Some(esp_idf_svc::tls::X509::pem_until_nul(ca));
     }
 
     match (tls.client_cert, tls.client_key) {
         (Some(cert), Some(key)) => {
-            cfg.client_certificate = Some(
-                esp_idf_svc::tls::X509::pem_until_nul(cert)
-                    .map_err(|e| anyhow::anyhow!("Invalid client certificate: {:?}", e))?,
-            );
-            cfg.private_key = Some(
-                esp_idf_svc::tls::X509::pem_until_nul(key)
-                    .map_err(|e| anyhow::anyhow!("Invalid client key: {:?}", e))?,
-            );
+            cfg.client_certificate = Some(esp_idf_svc::tls::X509::pem_until_nul(cert));
+            cfg.private_key = Some(esp_idf_svc::tls::X509::pem_until_nul(key));
         }
         (None, None) => {}
         _ => bail!(

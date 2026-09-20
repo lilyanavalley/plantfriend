@@ -1,6 +1,6 @@
 
-# [build]
-# target = "riscv32imc-esp-espidf"
+[build]
+target = "riscv32imac-esp-espidf"
 
 [target.riscv32imac-esp-espidf]
 # ldproxy forwards linker arguments to the real linker; required by esp-idf-hal.
@@ -31,6 +31,7 @@ rustflags = [
 # ESP-IDF version that embuild will download / locate.  Tested with v5.2.x.
 [env]
 ESP_IDF_VERSION = "v5.2.1"
+MCU = "esp32c6"
 
 [unstable]
 # Build std + panic_abort from source for the embedded target.

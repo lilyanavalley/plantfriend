@@ -185,16 +185,7 @@ const fn parse_u64(s: &str) -> u64 {
 
 const fn parse_bool(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 4
-        && matches!(
-            (
-                b.first().copied(),
-                b.get(1).copied(),
-                b.get(2).copied(),
-                b.get(3).copied(),
-            ),
-            (Some(b't'), Some(b'r'), Some(b'u'), Some(b'e'))
-        )
+    b.len() == 4 && b[0] == b't' && b[1] == b'r' && b[2] == b'u' && b[3] == b'e'
 }
 
 fn non_empty(value: &'static str) -> Option<&'static str> {

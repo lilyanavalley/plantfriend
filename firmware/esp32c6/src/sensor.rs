@@ -14,7 +14,7 @@
 
 use std::time::Instant;
 
-use esp_idf_svc::hal::gpio::{Input, PinDriver, Pull};
+use esp_idf_svc::hal::gpio::{AnyInputPin, Input, PinDriver, Pull};
 use log::debug;
 use plantfriend_core::sensors::{LiquidLevelDebouncer, LiquidState};
 
@@ -22,7 +22,7 @@ use crate::config::SensorConfig;
 
 /// Driver for the digital capacitive liquid level sensor.
 pub struct LiquidLevelSensor<'d> {
-    pin: PinDriver<'d, esp_idf_svc::hal::gpio::AnyInputPin, Input>,
+    pin: PinDriver<'d, Input>,
     active_high: bool,
     started_at: Instant,
     debouncer: LiquidLevelDebouncer,
@@ -35,14 +35,12 @@ impl<'d> LiquidLevelSensor<'d> {
     /// * `pin`    – GPIO pin configured as floating input (pull-up applied here).
     /// * `config` – Sensor section from the firmware configuration.
     pub fn new(
-        pin: esp_idf_svc::hal::gpio::AnyInputPin,
+        pin: AnyInputPin<'d>,
         config: &SensorConfig,
     ) -> anyhow::Result<Self> {
-        let mut driver = PinDriver::input(pin)?;
-
-        // The XKC-Y25-NPN has an NPN open-collector output.  A pull-up keeps
+        // The XKC-Y25-NPN has an NPN open-collector output. A pull-up keeps
         // the line HIGH when the sensor is not activated.
-        driver.set_pull(Pull::Up)?;
+        let driver = PinDriver::input(pin, Pull::Up)?;
 
         let initial = Self::read_raw(&driver, config.logic.active_high);
         debug!("Sensor initial state: {:?}", initial);
@@ -79,7 +77,7 @@ impl<'d> LiquidLevelSensor<'d> {
     // ── private ──────────────────────────────────────────────────────────────
 
     fn read_raw(
-        pin: &PinDriver<'_, esp_idf_svc::hal::gpio::AnyInputPin, Input>,
+        pin: &PinDriver<'_, Input>,
         active_high: bool,
     ) -> LiquidState {
         let level = pin.is_high();

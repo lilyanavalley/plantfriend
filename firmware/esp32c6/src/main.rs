@@ -71,7 +71,7 @@ fn main() -> Result<()> {
     // Obtain a type-erased input pin for the configured GPIO number.
     // SAFETY: We own `peripherals` exclusively (taken above); this pin will
     // not be aliased elsewhere in this single-binary firmware.
-    let sensor_pin: AnyInputPin = unsafe { AnyInputPin::new(cfg.sensor.gpio_pin as i32) };
+    let sensor_pin = unsafe { AnyInputPin::steal(cfg.sensor.gpio_pin as u8) };
     let mut sensor = LiquidLevelSensor::new(sensor_pin, &cfg.sensor)?;
 
     // ── Wi-Fi ─────────────────────────────────────────────────────────────────
