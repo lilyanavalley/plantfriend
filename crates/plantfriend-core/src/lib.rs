@@ -322,12 +322,10 @@ pub mod bthome {
     use crate::sensors::LiquidState;
 
     pub const BT_HOME_SERVICE_UUID: u16 = 0xFCD2;
-    const BT_HOME_INFO_OBJECT_ID: u8 = 0x40;
     const BT_HOME_BINARY_SENSOR_OBJECT_ID: u8 = 0x2D;
 
-    pub fn liquid_level_advertisement(state: LiquidState, encrypted: bool) -> [u8; 4] {
+    pub fn liquid_level_advertisement(state: LiquidState, encrypted: bool) -> [u8; 3] {
         [
-            BT_HOME_INFO_OBJECT_ID,
             if encrypted { 0b0100_0001 } else { 0b0100_0000 },
             BT_HOME_BINARY_SENSOR_OBJECT_ID,
             if state.as_bool() { 1 } else { 0 },
