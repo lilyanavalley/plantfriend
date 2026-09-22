@@ -23,5 +23,8 @@ jobs:
           espup install
           . /home/runner/export-esp.sh
 
+      - name: Switch to esp toolchain
+        run: rustup override set esp
+
       - name: Run Test
         run: cargo test --workspace
