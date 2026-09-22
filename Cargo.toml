@@ -1,15 +1,11 @@
-[package]
-name = "hydrolevel"
-version = "0.1.0"
-edition = "2021"
-authors = []
-description = "ESP32-C3 HomeAssistant-connected hydrolevel sensor node"
-license = "MIT"
+[workspace]
 resolver = "2"
-
-[[bin]]
-name = "hydrolevel"
-harness = false
+members = [
+    "crates/plantfriend-core",
+    "firmware/esp32c6",
+    "firmware/nrf52840",
+]
+default-members = ["firmware/esp32c6"]
 
 [profile.release]
 opt-level = "s"
@@ -17,38 +13,3 @@ opt-level = "s"
 [profile.dev]
 debug = true
 opt-level = "z"
-
-[features]
-default = ["std", "embassy", "esp-idf-svc/native"]
-
-std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
-alloc = ["esp-idf-svc/alloc"]
-embassy = ["esp-idf-svc/embassy-sync", "esp-idf-svc/critical-section", "esp-idf-svc/embassy-time-driver"]
-
-[dependencies]
-# ESP-IDF high-level service bindings
-esp-idf-svc = { version = "0.49", features = ["std", "binstart"] }
-
-# Embedded abstraction traits (WiFi, MQTT, etc.)
-embedded-svc = "0.28"
-
-# MQTT client (uses esp-idf-svc's built-in MQTT)
-# TLS/mTLS and MQTT 3.1/5 are handled by the underlying esp-mqtt component.
-
-# Error handling
-anyhow = "1"
-
-# Log facade
-log = { version = "0.4", default-features = false }
-
-# Serialisation – lightweight JSON for Home Assistant discovery payloads
-serde = { version = "1", default-features = false, features = ["derive"] }
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
-
-# Heapless string/queue buffers (no_std-friendly)
-heapless = "0.8"
-
-[build-dependencies]
-# Reads .env at build time and bakes values into sdkconfig / Cargo env
-embuild = "0.32"
-dotenvy = "0.15"

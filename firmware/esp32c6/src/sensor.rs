@@ -12,39 +12,20 @@
 // temperature, DHT22 humidity, analog pH probe) can be added as additional
 // modules without modifying this file.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use esp_idf_svc::hal::gpio::{Input, PinDriver, Pull};
+use esp_idf_svc::hal::gpio::{AnyInputPin, Input, PinDriver, Pull};
 use log::debug;
+use plantfriend_core::sensors::{LiquidLevelDebouncer, LiquidState};
 
 use crate::config::SensorConfig;
 
-/// Logical state of the liquid level sensor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiquidState {
-    /// Liquid is detected at the sensor position.
-    Present,
-    /// No liquid detected.
-    Absent,
-}
-
-impl LiquidState {
-    /// Returns the Home Assistant-compatible state string.
-    pub fn as_ha_state(self) -> &'static str {
-        match self {
-            LiquidState::Present => "ON",
-            LiquidState::Absent => "OFF",
-        }
-    }
-}
-
 /// Driver for the digital capacitive liquid level sensor.
 pub struct LiquidLevelSensor<'d> {
-    pin: PinDriver<'d, esp_idf_svc::hal::gpio::AnyInputPin, Input>,
+    pin: PinDriver<'d, Input>,
     active_high: bool,
-    debounce: Duration,
-    last_stable: LiquidState,
-    last_change: Instant,
+    started_at: Instant,
+    debouncer: LiquidLevelDebouncer,
 }
 
 impl<'d> LiquidLevelSensor<'d> {
@@ -54,24 +35,21 @@ impl<'d> LiquidLevelSensor<'d> {
     /// * `pin`    – GPIO pin configured as floating input (pull-up applied here).
     /// * `config` – Sensor section from the firmware configuration.
     pub fn new(
-        pin: esp_idf_svc::hal::gpio::AnyInputPin,
+        pin: AnyInputPin<'d>,
         config: &SensorConfig,
     ) -> anyhow::Result<Self> {
-        let mut driver = PinDriver::input(pin)?;
-
-        // The XKC-Y25-NPN has an NPN open-collector output.  A pull-up keeps
+        // The XKC-Y25-NPN has an NPN open-collector output. A pull-up keeps
         // the line HIGH when the sensor is not activated.
-        driver.set_pull(Pull::Up)?;
+        let driver = PinDriver::input(pin, Pull::Up)?;
 
-        let initial = Self::read_raw(&driver, config.active_high);
+        let initial = Self::read_raw(&driver, config.logic.active_high);
         debug!("Sensor initial state: {:?}", initial);
 
         Ok(Self {
             pin: driver,
-            active_high: config.active_high,
-            debounce: Duration::from_millis(config.debounce_ms),
-            last_stable: initial,
-            last_change: Instant::now(),
+            active_high: config.logic.active_high,
+            started_at: Instant::now(),
+            debouncer: LiquidLevelDebouncer::new(initial, config.logic.debounce_ms),
         })
     }
 
@@ -80,31 +58,26 @@ impl<'d> LiquidLevelSensor<'d> {
     /// Returns `Some(state)` on a debounced state transition, `None` otherwise.
     pub fn poll(&mut self) -> Option<LiquidState> {
         let raw = Self::read_raw(&self.pin, self.active_high);
+        let now_ms = self.started_at.elapsed().as_millis() as u64;
 
-        if raw != self.last_stable {
-            if self.last_change.elapsed() >= self.debounce {
-                self.last_stable = raw;
-                self.last_change = Instant::now();
-                debug!("Sensor state changed: {:?}", raw);
-                return Some(raw);
-            }
-        } else {
-            // Reset the debounce timer when the signal returns to the stable value.
-            self.last_change = Instant::now();
+        if let Some(stable) = self.debouncer.update(raw, now_ms) {
+            debug!("Sensor state changed: {:?}", stable);
+            return Some(stable);
         }
+
         None
     }
 
     /// Return the current debounced (stable) state without triggering a change
     /// event.  Useful for the initial publish on startup.
     pub fn state(&self) -> LiquidState {
-        self.last_stable
+        self.debouncer.stable()
     }
 
     // ── private ──────────────────────────────────────────────────────────────
 
     fn read_raw(
-        pin: &PinDriver<'_, esp_idf_svc::hal::gpio::AnyInputPin, Input>,
+        pin: &PinDriver<'_, Input>,
         active_high: bool,
     ) -> LiquidState {
         let level = pin.is_high();

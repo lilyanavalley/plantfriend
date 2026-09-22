@@ -4,7 +4,7 @@
 # Override individual options in sdkconfig.defaults.esp32c3 if needed.
 
 # ── Target ───────────────────────────────────────────────────────────────────
-CONFIG_IDF_TARGET="esp32c3"
+CONFIG_IDF_TARGET="esp32c6"
 
 # ── System / RTOS ─────────────────────────────────────────────────────────────
 CONFIG_FREERTOS_HZ=1000

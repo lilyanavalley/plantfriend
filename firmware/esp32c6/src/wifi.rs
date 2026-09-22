@@ -2,8 +2,7 @@
 
 use anyhow::Result;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::modem::Modem;
-use esp_idf_svc::hal::peripheral::Peripheral;
+use esp_idf_svc::hal::modem::WifiModemPeripheral;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::info;
@@ -19,7 +18,7 @@ use crate::config::WifiConfig;
 /// * `'d` – lifetime tied to the modem peripheral, typically the lifetime of
 ///           `Peripherals` which lives in `main()`.
 pub fn connect<'d>(
-    modem: impl Peripheral<P = Modem> + 'd,
+    modem: impl WifiModemPeripheral + 'd,
     sysloop: EspSystemEventLoop,
     nvs: EspDefaultNvsPartition,
     config: &WifiConfig,
