@@ -20,7 +20,8 @@ jobs:
       - name: Install espup and esp32 toolchain
         run: |
           cargo binstall espup
-          espup install 
+          espup install
+          . /home/runner/export-esp.sh
 
       - name: Run Test
         run: cargo test --workspace
