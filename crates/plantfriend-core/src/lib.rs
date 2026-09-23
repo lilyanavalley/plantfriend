@@ -1,8 +1,13 @@
+
 #![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
+
+/// Sensors of PlantFriend for keeping good care.
+pub mod sensors;
+
 
 pub mod protocol {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +22,7 @@ pub mod protocol {
 pub mod capabilities {
     pub const SUPPORTS_BLE: bool = cfg!(feature = "framework-ble");
     pub const SUPPORTS_WIFI_MQTT: bool = cfg!(feature = "framework-wifi-mqtt");
-    pub const SUPPORTS_DIGITAL_INPUT_SENSORS: bool = cfg!(feature = "sensor-digital-input");
+    pub const SUPPORTS_SENSOR_XKC_Y25: bool = cfg!(feature = "sensor-xkc-y25");
 
     pub const CHIP_ESP32_PROFILE: bool = cfg!(feature = "chip-esp32");
     pub const CHIP_NRF52_PROFILE: bool = cfg!(feature = "chip-nrf52");
@@ -145,107 +150,13 @@ pub mod mqtt {
     }
 }
 
-pub mod sensors {
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum LiquidState {
-        Present,
-        Absent,
-    }
-
-    impl LiquidState {
-        pub fn as_ha_state(self) -> &'static str {
-            match self {
-                LiquidState::Present => "ON",
-                LiquidState::Absent => "OFF",
-            }
-        }
-
-        pub fn as_bool(self) -> bool {
-            matches!(self, LiquidState::Present)
-        }
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct LightLux(pub f32);
-
-    pub trait SensorHubSnapshot {
-        fn liquid_level(&self) -> LiquidState;
-        fn light_lux(&self) -> Option<LightLux>;
-        fn water_level_switch_closed(&self) -> Option<bool>;
-    }
-
-    #[cfg(feature = "sensor-digital-input")]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct DigitalInputLiquidSensorConfig {
-        pub active_high: bool,
-        pub debounce_ms: u64,
-    }
-
-    #[cfg(feature = "sensor-digital-input")]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    struct PendingTransition {
-        state: LiquidState,
-        since_ms: u64,
-    }
-
-    #[cfg(feature = "sensor-digital-input")]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct LiquidLevelDebouncer {
-        stable: LiquidState,
-        debounce_ms: u64,
-        pending: Option<PendingTransition>,
-    }
-
-    #[cfg(feature = "sensor-digital-input")]
-    impl LiquidLevelDebouncer {
-        pub fn new(initial: LiquidState, debounce_ms: u64) -> Self {
-            Self {
-                stable: initial,
-                debounce_ms,
-                pending: None,
-            }
-        }
-
-        pub fn stable(&self) -> LiquidState {
-            self.stable
-        }
-
-        pub fn update(&mut self, observed: LiquidState, now_ms: u64) -> Option<LiquidState> {
-            if observed == self.stable {
-                self.pending = None;
-                return None;
-            }
-
-            match self.pending {
-                Some(pending) if pending.state == observed => {
-                    if now_ms.saturating_sub(pending.since_ms) >= self.debounce_ms {
-                        self.stable = observed;
-                        self.pending = None;
-                        Some(self.stable)
-                    } else {
-                        None
-                    }
-                }
-                _ => {
-                    self.pending = Some(PendingTransition {
-                        state: observed,
-                        since_ms: now_ms,
-                    });
-                    None
-                }
-            }
-        }
-    }
-}
-
 #[cfg(feature = "homeassistant-mqtt")]
 pub mod homeassistant {
     use alloc::string::String;
     use serde::Serialize;
 
     use crate::mqtt;
-    use crate::sensors::LiquidState;
+    use crate::sensors::{HomeAssistantState, LiquidState};
 
     pub const PAYLOAD_ON: &str = "ON";
     pub const PAYLOAD_OFF: &str = "OFF";
@@ -286,15 +197,18 @@ pub mod homeassistant {
         mqtt::liquid_level_discovery_topic(discovery_prefix, device_id)
     }
 
-    pub fn liquid_level_discovery_payload(
+    pub fn binary_sensor_discovery_payload(
         metadata: DeviceMetadata<'_>,
+        object_id: &str,
+        name: &str,
+        device_class: &str,
         state_topic: &str,
         availability_topic: &str,
     ) -> Result<String, serde_json::Error> {
         let payload = BinarySensorDiscoveryPayload {
-            name: "Liquid Level",
-            unique_id: alloc::format!("{}_liquid_level", metadata.device_id),
-            device_class: "moisture",
+            name,
+            unique_id: alloc::format!("{}_{}", metadata.device_id, object_id),
+            device_class,
             state_topic,
             availability_topic,
             payload_on: PAYLOAD_ON,
@@ -312,8 +226,30 @@ pub mod homeassistant {
         serde_json::to_string(&payload)
     }
 
-    pub fn liquid_level_state_payload(state: LiquidState) -> &'static str {
+    pub fn liquid_level_discovery_payload(
+        metadata: DeviceMetadata<'_>,
+        state_topic: &str,
+        availability_topic: &str,
+    ) -> Result<String, serde_json::Error> {
+        binary_sensor_discovery_payload(
+            metadata,
+            "liquid_level",
+            "Liquid Level",
+            "moisture",
+            state_topic,
+            availability_topic,
+        )
+    }
+
+    pub fn binary_sensor_state_payload<S>(state: S) -> &'static str
+    where
+        S: HomeAssistantState,
+    {
         state.as_ha_state()
+    }
+
+    pub fn liquid_level_state_payload(state: LiquidState) -> &'static str {
+        binary_sensor_state_payload(state)
     }
 }
 

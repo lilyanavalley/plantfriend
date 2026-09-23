@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use esp_idf_svc::hal::gpio::{AnyInputPin, Input, PinDriver, Pull};
 use log::debug;
-use plantfriend_core::sensors::{LiquidLevelDebouncer, LiquidState};
+use plantfriend_core::sensors::{decode_digital_input_state, LiquidLevelDebouncer, LiquidState};
 
 use crate::config::SensorConfig;
 
@@ -81,10 +81,6 @@ impl<'d> LiquidLevelSensor<'d> {
         active_high: bool,
     ) -> LiquidState {
         let level = pin.is_high();
-        if level == active_high {
-            LiquidState::Present
-        } else {
-            LiquidState::Absent
-        }
+        decode_digital_input_state(level, active_high)
     }
 }

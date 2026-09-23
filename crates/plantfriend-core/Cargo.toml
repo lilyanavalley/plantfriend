@@ -10,7 +10,7 @@ name = "plantfriend_core"
 path = "src/lib.rs"
 
 [features]
-default = ["std", "framework-ble", "framework-wifi-mqtt", "sensor-digital-input"]
+default = ["std", "framework-ble", "framework-wifi-mqtt", "sensor-xkc-y25", "sensor-floatswitch"]
 std = []
 alloc = []
 
@@ -19,11 +19,12 @@ framework-ble = ["bthome"]
 framework-wifi-mqtt = ["homeassistant-mqtt"]
 
 # Chip capability presets.
-chip-esp32 = ["std", "framework-wifi-mqtt", "sensor-digital-input"]
+chip-esp32 = ["std", "framework-wifi-mqtt"]
 chip-nrf52 = ["framework-ble"]
 
 bthome = []
-sensor-digital-input = []
+sensor-xkc-y25 = []
+sensor-floatswitch = []
 homeassistant-mqtt = ["framework-wifi-mqtt-base", "dep:serde", "dep:serde_json"]
 
 # Internal foundational layer for MQTT topic and availability semantics.
