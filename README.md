@@ -1,4 +1,6 @@
-# plantfriend / plantfriend firmware workspace
+# PlantFriend Workspace
+
+🪴 *climate monitoring for plant friends*
 
 Modular embedded firmware workspace for a plantfriend sensor hub that targets multiple chip families while sharing a common core.
 
@@ -74,14 +76,31 @@ espflash flash --monitor target/riscv32imac-esp-espidf/release/esp32c6
 
 ## ESP32 configuration
 
-Copy and edit:
+Primary configuration now lives in:
+
+`firmware/esp32c6/device.toml`
+
+This file defines:
+- device metadata
+- Wi-Fi + MQTT transport settings
+- sensor selection (`kind`) and pin assignments
+- per-sensor outputs (MQTT, Home Assistant, BTHome)
+
+The ESP32 build script validates this config and generates compile-time Rust
+artifacts in `OUT_DIR`, including a sensor runtime contract:
+- `runtime_contract.rs`
+- `generated_device_config.rs`
+- `certs.rs`
+
+Optional override file:
 
 ```sh
 cp firmware/esp32c6/.env.example firmware/esp32c6/.env
 $EDITOR firmware/esp32c6/.env
 ```
 
-All `PLANTFRIEND_*` values are loaded at build time for the ESP32 package.
+`.env` is now intended for optional overrides (for example TLS cert paths and
+OTA switches), while sensor definitions come from `device.toml`.
 
 ## Flashing nRF52840
 

@@ -27,10 +27,17 @@ use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
 use log::{error, info, warn};
 use plantfriend_core::publish::{MonotonicClock, PublishReason, StatePublishPolicy};
+use plantfriend_core::sensors::LiquidState;
 
-use config::Config;
+use config::{Config, GeneratedSensorRuntimeSpec};
 use mqtt::MqttManager;
 use sensor::LiquidLevelSensor;
+
+struct ActiveSensor<'d> {
+    spec: &'static GeneratedSensorRuntimeSpec,
+    sensor: LiquidLevelSensor<'d>,
+    publish_policy: StatePublishPolicy<LiquidState>,
+}
 
 struct UptimeClock {
     started_at: Instant,
@@ -67,13 +74,6 @@ fn main() -> Result<()> {
         cfg.ha.device_id, cfg.mqtt.broker_uri
     );
 
-    // ── Sensor GPIO ───────────────────────────────────────────────────────────
-    // Obtain a type-erased input pin for the configured GPIO number.
-    // SAFETY: We own `peripherals` exclusively (taken above); this pin will
-    // not be aliased elsewhere in this single-binary firmware.
-    let sensor_pin = unsafe { AnyInputPin::steal(cfg.sensor.gpio_pin as u8) };
-    let mut sensor = LiquidLevelSensor::new(sensor_pin, &cfg.sensor)?;
-
     // ── Wi-Fi ─────────────────────────────────────────────────────────────────
     // `_wifi` must remain alive for the duration of the program to keep the
     // Wi-Fi interface active.
@@ -108,31 +108,58 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let uptime_clock = UptimeClock::new();
-    let mut publish_policy =
-        StatePublishPolicy::with_clock(sensor.state(), heartbeat_interval_ms, &uptime_clock);
 
-    // Publish the initial sensor state so HA doesn't show "unavailable".
-    if let Some(initial) = publish_policy.initial_event() {
-        mqtt.publish_state(initial.state)?;
+    let uptime_clock = UptimeClock::new();
+
+    let mut sensors: Vec<ActiveSensor<'static>> = Vec::with_capacity(cfg.runtime.sensors.len());
+    for spec in cfg.runtime.sensors {
+        // SAFETY: We own `peripherals` exclusively (taken above). The build-time
+        // validation guarantees unique GPIO assignment in the sensor list.
+        let pin = unsafe { AnyInputPin::steal(spec.pin as u8) };
+        let sensor = LiquidLevelSensor::new(pin, spec.logic.active_high, spec.logic.debounce_ms)?;
+
+        info!("Configured sensor '{}' on GPIO {}", spec.id, spec.pin);
+
+        sensors.push(ActiveSensor {
+            spec,
+            publish_policy: StatePublishPolicy::with_clock(
+                sensor.state(),
+                heartbeat_interval_ms,
+                &uptime_clock,
+            ),
+            sensor,
+        });
+    }
+
+    // Publish initial sensor states so HA doesn't show "unavailable".
+    for runtime in &mut sensors {
+        if let Some(initial) = runtime.publish_policy.initial_event() {
+            mqtt.publish_state_for_sensor(runtime.spec.id, initial.state)?;
+        }
     }
 
     info!("Entering main loop");
     loop {
-        // Poll sensor for debounced state change.
-        if let Some(new_state) = sensor.poll() {
-            if let Some(event) = publish_policy.on_state_change(new_state) {
-                if let Err(e) = mqtt.publish_state(event.state) {
-                    error!("Failed to publish state update ({:?}): {e}", event.reason);
+        for runtime in &mut sensors {
+            // Poll sensor for debounced state change.
+            if let Some(new_state) = runtime.sensor.poll() {
+                if let Some(event) = runtime.publish_policy.on_state_change(new_state) {
+                    if let Err(e) = mqtt.publish_state_for_sensor(runtime.spec.id, event.state) {
+                        error!(
+                            "Failed to publish sensor '{}' state update ({:?}): {e}",
+                            runtime.spec.id,
+                            event.reason
+                        );
+                    }
                 }
             }
-        }
 
-        // Periodic heartbeat publish keeps HA state fresh after broker restart.
-        if let Some(event) = publish_policy.on_tick_with_clock(&uptime_clock) {
-            if matches!(event.reason, PublishReason::Heartbeat) {
-                if let Err(e) = mqtt.publish_state(event.state) {
-                    warn!("Heartbeat publish failed: {e}");
+            // Periodic heartbeat publish keeps HA state fresh after broker restart.
+            if let Some(event) = runtime.publish_policy.on_tick_with_clock(&uptime_clock) {
+                if matches!(event.reason, PublishReason::Heartbeat) {
+                    if let Err(e) = mqtt.publish_state_for_sensor(runtime.spec.id, event.state) {
+                        warn!("Heartbeat publish failed for sensor '{}': {e}", runtime.spec.id);
+                    }
                 }
             }
         }

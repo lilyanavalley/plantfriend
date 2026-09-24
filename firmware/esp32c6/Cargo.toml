@@ -41,3 +41,5 @@ plantfriend-core = { path = "../../crates/plantfriend-core", default-features = 
 # Reads .env at build time and bakes values into sdkconfig / Cargo env
 embuild = "0.33.5"
 dotenvy = "0.15"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"

@@ -4,8 +4,8 @@
 //   • Output LOW (pulled to GND) → liquid detected (sensor activated)
 //   • Output HIGH (pulled up)   → no liquid (sensor not activated)
 //
-// The active polarity can be inverted via `SensorConfig::active_high` to
-// support other sensor variants or inverted wiring.
+// The active polarity can be inverted to support different digital sensors
+// (XKC, float switch variants, inverted wiring, etc.).
 //
 // Reading the sensor in a loop with a software debounce is intentionally simple
 // and compatible with the single-core ESP32-C3.  Future sensors (e.g., DS18B20
@@ -16,11 +16,11 @@ use std::time::Instant;
 
 use esp_idf_svc::hal::gpio::{AnyInputPin, Input, PinDriver, Pull};
 use log::debug;
-use plantfriend_core::sensors::{decode_digital_input_state, LiquidLevelDebouncer, LiquidState};
+use plantfriend_core::sensors::{
+    decode_digital_input_state, DigitalInputSensorConfig, LiquidLevelDebouncer, LiquidState,
+};
 
-use crate::config::SensorConfig;
-
-/// Driver for the digital capacitive liquid level sensor.
+/// Driver for digital input sensors that map to `LiquidState`.
 pub struct LiquidLevelSensor<'d> {
     pin: PinDriver<'d, Input>,
     active_high: bool,
@@ -29,28 +29,56 @@ pub struct LiquidLevelSensor<'d> {
 }
 
 impl<'d> LiquidLevelSensor<'d> {
-    /// Initialise the sensor driver.
-    ///
-    /// # Arguments
-    /// * `pin`    – GPIO pin configured as floating input (pull-up applied here).
-    /// * `config` – Sensor section from the firmware configuration.
-    pub fn new(
+    /// Initialise the sensor driver from explicit digital input logic settings.
+    pub fn new_with_logic(
         pin: AnyInputPin<'d>,
-        config: &SensorConfig,
+        logic: DigitalInputSensorConfig,
     ) -> anyhow::Result<Self> {
-        // The XKC-Y25-NPN has an NPN open-collector output. A pull-up keeps
-        // the line HIGH when the sensor is not activated.
+        // Many digital sensors expose an open-collector/open-drain style output.
+        // Pull-up keeps the line in a defined idle state.
         let driver = PinDriver::input(pin, Pull::Up)?;
 
-        let initial = Self::read_raw(&driver, config.logic.active_high);
+        let initial = Self::read_raw(&driver, logic.active_high);
         debug!("Sensor initial state: {:?}", initial);
 
         Ok(Self {
             pin: driver,
-            active_high: config.logic.active_high,
+            active_high: logic.active_high,
             started_at: Instant::now(),
-            debouncer: LiquidLevelDebouncer::new(initial, config.logic.debounce_ms),
+            debouncer: LiquidLevelDebouncer::new(initial, logic.debounce_ms),
         })
+    }
+
+    /// Backward-compatible constructor for legacy single-sensor config.
+    ///
+    /// # Arguments
+    /// * `pin`    – GPIO pin configured as floating input (pull-up applied here).
+    /// * `active_high` – Whether a HIGH level represents sensor active.
+    /// * `debounce_ms` – Software debounce window in milliseconds.
+    pub fn new(
+        pin: AnyInputPin<'d>,
+        active_high: bool,
+        debounce_ms: u64,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_logic(
+            pin,
+            DigitalInputSensorConfig {
+                active_high,
+                debounce_ms,
+            },
+        )
+    }
+
+    /// Initialise the sensor driver.
+    ///
+    /// # Arguments
+    /// * `pin`    – GPIO pin configured as floating input (pull-up applied here).
+    /// * `logic` – Shared digital input behavior settings.
+    pub fn from_logic_config(
+        pin: AnyInputPin<'d>,
+        logic: &DigitalInputSensorConfig,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_logic(pin, *logic)
     }
 
     /// Poll the sensor and return the new stable state if it has changed.
