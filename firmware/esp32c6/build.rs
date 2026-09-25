@@ -1,97 +1,364 @@
 // build.rs – project build script
 //
 // Responsibilities:
-//  1. Load the user's .env file (if present) and propagate variables to the
-//     compiler environment so that env!() macros in source code resolve them.
-//  2. Embed optional TLS certificate/key files as byte arrays via a generated
-//     source file written to OUT_DIR.
-//  3. Run the embuild / esp-idf-svc link-time setup required for ESP-IDF.
+//  1. Load optional .env overrides and PLANTFRIEND_* process env values.
+//  2. Parse and validate device.toml as the source-of-truth build config.
+//  3. Generate Rust config/runtime contract artifacts in OUT_DIR.
+//  4. Embed optional TLS certificate/key files.
+//  5. Run embuild / esp-idf-svc link-time setup required for ESP-IDF.
 
-use std::env;
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "build_config.rs"]
+mod build_config;
+
+use build_config::{normalize_optional_str, DeviceToml, SensorRuntimeDriverKind};
+
 fn main() {
-    // ── 1. Load .env ─────────────────────────────────────────────────────────
-    // Always resolve .env relative to this crate, so workspace-root builds
-    // (`cargo build -p esp32c6`) and crate-local builds behave the same.
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR missing");
-    let env_path = Path::new(&manifest_dir).join(".env");
-
-    // Collect build-time config vars from .env first, then let process env
-    // override them. This allows ad-hoc CI/shell overrides while still working
-    // out-of-the-box for local development.
-    let mut plantfriend_vars: BTreeMap<String, String> = BTreeMap::new();
-
-    if env_path.exists() {
-        match fs::read_to_string(&env_path) {
-            Ok(content) => {
-                for (idx, raw_line) in content.lines().enumerate() {
-                    let line = raw_line.trim();
-                    if line.is_empty() || line.starts_with('#') {
-                        continue;
-                    }
-
-                    let Some((raw_key, raw_value)) = line.split_once('=') else {
-                        println!(
-                            "cargo:warning=ignoring malformed .env line {} in '{}'",
-                            idx + 1,
-                            env_path.display()
-                        );
-                        continue;
-                    };
-
-                    let key = raw_key.trim();
-                    if !key.starts_with("PLANTFRIEND_") {
-                        continue;
-                    }
-
-                    let mut value = raw_value.trim().to_string();
-                    if value.len() >= 2 {
-                        let first = value.as_bytes()[0] as char;
-                        let last = value.as_bytes()[value.len() - 1] as char;
-                        if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-                            value = value[1..value.len() - 1].to_string();
-                        }
-                    }
-
-                    plantfriend_vars.insert(key.to_string(), value);
-                }
-            }
-            Err(err) => {
-                println!(
-                    "cargo:warning=could not read '{}': {err}",
-                    env_path.display()
-                );
-            }
-        }
-    }
+    let manifest_dir = PathBuf::from(manifest_dir);
+    let env_path = manifest_dir.join(".env");
+    let device_toml_path = manifest_dir.join("device.toml");
 
     println!("cargo:rerun-if-changed={}", env_path.display());
+    println!("cargo:rerun-if-changed={}", device_toml_path.display());
     println!("cargo:rerun-if-changed=build.rs");
 
-    // ── 2. Forward PLANTFRIEND_* env vars to rustc ─────────────────────────────
-    for (key, value) in env::vars() {
-        if key.starts_with("PLANTFRIEND_") {
-            plantfriend_vars.insert(key, value);
-        }
-    }
+    let mut plantfriend_vars = load_plantfriend_env_overrides(&env_path);
+    overlay_process_env(&mut plantfriend_vars);
 
-    for (key, value) in plantfriend_vars {
-        env::set_var(&key, &value);
+    for (key, value) in &plantfriend_vars {
+        env::set_var(key, value);
         println!("cargo:rustc-env={key}={value}");
     }
 
-    // ── 3. Generate certs.rs in OUT_DIR ───────────────────────────────────────
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let cfg = load_device_toml(&device_toml_path);
+    build_config::validate_device_toml(&cfg)
+        .unwrap_or_else(|e| panic!("Invalid device.toml at '{}': {e}", device_toml_path.display()));
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR missing"));
+
+    // Sensor topology and runtime contract.
+    let runtime_contract_rs = out_dir.join("runtime_contract.rs");
+    fs::write(&runtime_contract_rs, generate_runtime_contract_rs(&cfg))
+        .expect("failed to write runtime_contract.rs");
+
+    // Compile-time values consumed by config.rs.
+    let generated_device_config_rs = out_dir.join("generated_device_config.rs");
+    fs::write(
+        &generated_device_config_rs,
+        generate_device_config_rs(&cfg, &plantfriend_vars),
+    )
+    .expect("failed to write generated_device_config.rs");
+
+    // TLS bytes are still generated separately to keep wiring simple.
     let certs_rs = out_dir.join("certs.rs");
+    let certs_content = generate_certs_rs(&manifest_dir, &cfg, &plantfriend_vars);
+    fs::write(&certs_rs, certs_content).expect("failed to write certs.rs");
 
-    let ca_cert = read_cert_env("PLANTFRIEND_MQTT_CA_CERT_PATH");
-    let client_cert = read_cert_env("PLANTFRIEND_MQTT_CLIENT_CERT_PATH");
-    let client_key = read_cert_env("PLANTFRIEND_MQTT_CLIENT_KEY_PATH");
+    embuild::espidf::sysenv::output();
+}
 
-    let certs_content = format!(
+fn load_plantfriend_env_overrides(env_path: &Path) -> BTreeMap<String, String> {
+    let mut vars = BTreeMap::new();
+
+    if !env_path.exists() {
+        return vars;
+    }
+
+    match fs::read_to_string(env_path) {
+        Ok(content) => {
+            for (idx, raw_line) in content.lines().enumerate() {
+                let line = raw_line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+
+                let Some((raw_key, raw_value)) = line.split_once('=') else {
+                    println!(
+                        "cargo:warning=ignoring malformed .env line {} in '{}'",
+                        idx + 1,
+                        env_path.display()
+                    );
+                    continue;
+                };
+
+                let key = raw_key.trim();
+                if !key.starts_with("PLANTFRIEND_") {
+                    continue;
+                }
+
+                vars.insert(key.to_string(), unquote_env(raw_value.trim()));
+            }
+        }
+        Err(err) => {
+            println!(
+                "cargo:warning=could not read '{}': {err}",
+                env_path.display()
+            );
+        }
+    }
+
+    vars
+}
+
+fn overlay_process_env(vars: &mut BTreeMap<String, String>) {
+    for (key, value) in env::vars() {
+        if key.starts_with("PLANTFRIEND_") {
+            vars.insert(key, value);
+        }
+    }
+}
+
+fn unquote_env(raw: &str) -> String {
+    let mut value = raw.to_string();
+    if value.len() >= 2 {
+        let first = value.as_bytes()[0] as char;
+        let last = value.as_bytes()[value.len() - 1] as char;
+        if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+            value = value[1..value.len() - 1].to_string();
+        }
+    }
+    value
+}
+
+fn load_device_toml(path: &Path) -> DeviceToml {
+    let content = fs::read_to_string(path).unwrap_or_else(|err| {
+        panic!(
+            "Failed to read '{}': {err}. Create device.toml to define sensors and transports.",
+            path.display()
+        )
+    });
+
+    build_config::parse_device_toml(&content)
+        .unwrap_or_else(|err| panic!("Invalid device.toml at '{}': {err}", path.display()))
+}
+
+fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
+    let mut body = String::new();
+
+    body.push_str("// Auto-generated by build.rs from device.toml – do not edit\n");
+    body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    body.push_str("pub enum GeneratedSensorKind {\n");
+    body.push_str("    XkcY25,\n");
+    body.push_str("    BasicFloat,\n");
+    body.push_str("}\n\n");
+
+    body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    body.push_str("pub struct GeneratedSensorOutputFlags {\n");
+    body.push_str("    pub mqtt: bool,\n");
+    body.push_str("    pub homeassistant: bool,\n");
+    body.push_str("    pub bthome: bool,\n");
+    body.push_str("}\n\n");
+
+    body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    body.push_str("pub struct GeneratedDigitalInputConfig {\n");
+    body.push_str("    pub active_high: bool,\n");
+    body.push_str("    pub debounce_ms: u64,\n");
+    body.push_str("}\n\n");
+
+    body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    body.push_str("pub struct GeneratedSensorRuntimeSpec {\n");
+    body.push_str("    pub id: &'static str,\n");
+    body.push_str("    pub kind: GeneratedSensorKind,\n");
+    body.push_str("    pub pin: u32,\n");
+    body.push_str("    pub logic: GeneratedDigitalInputConfig,\n");
+    body.push_str("    pub outputs: GeneratedSensorOutputFlags,\n");
+    body.push_str("    pub mqtt_state_topic: Option<&'static str>,\n");
+    body.push_str("    pub ha_object_id: Option<&'static str>,\n");
+    body.push_str("    pub ha_name: Option<&'static str>,\n");
+    body.push_str("    pub ha_device_class: Option<&'static str>,\n");
+    body.push_str("}\n\n");
+
+    body.push_str("pub static GENERATED_SENSOR_SPECS: &[GeneratedSensorRuntimeSpec] = &[\n");
+    for sensor in &cfg.sensors {
+        let kind = SensorRuntimeDriverKind::from_device_kind(sensor.kind.as_str())
+            .expect("sensor kind should already be validated")
+            .generated_sensor_kind_variant();
+
+        let mqtt_topic = sensor
+            .mqtt
+            .as_ref()
+            .map(|m| format!("Some({})", to_rust_str(&m.state_topic)))
+            .unwrap_or_else(|| "None".to_string());
+
+        let (ha_object_id, ha_name, ha_device_class) = match &sensor.homeassistant {
+            Some(ha) => (
+                format!("Some({})", to_rust_str(&ha.object_id)),
+                format!("Some({})", to_rust_str(&ha.name)),
+                format!("Some({})", to_rust_str(&ha.device_class)),
+            ),
+            None => (
+                "None".to_string(),
+                "None".to_string(),
+                "None".to_string(),
+            ),
+        };
+
+        body.push_str("    GeneratedSensorRuntimeSpec {\n");
+        body.push_str(&format!("        id: {},\n", to_rust_str(&sensor.id)));
+        body.push_str(&format!("        kind: {kind},\n"));
+        body.push_str(&format!("        pin: {},\n", sensor.pin));
+        body.push_str("        logic: GeneratedDigitalInputConfig {\n");
+        body.push_str(&format!("            active_high: {},\n", sensor.active_high));
+        body.push_str(&format!("            debounce_ms: {},\n", sensor.debounce_ms));
+        body.push_str("        },\n");
+        body.push_str("        outputs: GeneratedSensorOutputFlags {\n");
+        body.push_str(&format!("            mqtt: {},\n", sensor.outputs.mqtt));
+        body.push_str(&format!("            homeassistant: {},\n", sensor.outputs.homeassistant));
+        body.push_str(&format!("            bthome: {},\n", sensor.outputs.bthome));
+        body.push_str("        },\n");
+        body.push_str(&format!("        mqtt_state_topic: {mqtt_topic},\n"));
+        body.push_str(&format!("        ha_object_id: {ha_object_id},\n"));
+        body.push_str(&format!("        ha_name: {ha_name},\n"));
+        body.push_str(&format!("        ha_device_class: {ha_device_class},\n"));
+        body.push_str("    },\n");
+    }
+    body.push_str("];\n");
+
+    body
+}
+
+fn generate_device_config_rs(cfg: &DeviceToml, env_vars: &BTreeMap<String, String>) -> String {
+    let first_sensor = cfg
+        .sensors
+        .first()
+        .expect("at least one sensor validated before code generation");
+
+    let tls = cfg.mqtt.tls.as_ref();
+
+    let ca_cert_path = normalize_optional_str(tls.and_then(|t| t.ca_cert_path.as_deref()))
+        .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CA_CERT_PATH"));
+    let client_cert_path =
+        normalize_optional_str(tls.and_then(|t| t.client_cert_path.as_deref()))
+            .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_CERT_PATH"));
+    let client_key_path = normalize_optional_str(tls.and_then(|t| t.client_key_path.as_deref()))
+        .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_KEY_PATH"));
+
+    let mut body = String::new();
+    body.push_str("// Auto-generated by build.rs from device.toml – do not edit\n");
+
+    body.push_str(&format!(
+        "pub static GEN_WIFI_SSID: &str = {};\n",
+        to_rust_str(&cfg.wifi.ssid)
+    ));
+    body.push_str(&format!(
+        "pub static GEN_WIFI_PASSWORD: &str = {};\n",
+        to_rust_str(&cfg.wifi.password)
+    ));
+
+    body.push_str(&format!(
+        "pub static GEN_MQTT_BROKER_URI: &str = {};\n",
+        to_rust_str(&cfg.mqtt.broker_uri)
+    ));
+    body.push_str(&format!(
+        "pub static GEN_MQTT_USERNAME: &str = {};\n",
+        to_rust_str(cfg.mqtt.username.as_deref().unwrap_or(""))
+    ));
+    body.push_str(&format!(
+        "pub static GEN_MQTT_PASSWORD: &str = {};\n",
+        to_rust_str(cfg.mqtt.password.as_deref().unwrap_or(""))
+    ));
+    body.push_str(&format!(
+        "pub static GEN_MQTT_CLIENT_ID: &str = {};\n",
+        to_rust_str(&cfg.mqtt.client_id)
+    ));
+
+    body.push_str(&format!(
+        "pub static GEN_MQTT_CA_CERT_PATH: Option<&str> = {};\n",
+        option_str_literal(ca_cert_path.as_deref())
+    ));
+    body.push_str(&format!(
+        "pub static GEN_MQTT_CLIENT_CERT_PATH: Option<&str> = {};\n",
+        option_str_literal(client_cert_path.as_deref())
+    ));
+    body.push_str(&format!(
+        "pub static GEN_MQTT_CLIENT_KEY_PATH: Option<&str> = {};\n",
+        option_str_literal(client_key_path.as_deref())
+    ));
+
+    body.push_str(&format!(
+        "pub static GEN_PUBLISH_INTERVAL_MS: u64 = {};\n",
+        cfg.publish.interval_ms
+    ));
+
+    body.push_str(&format!(
+        "pub static GEN_HA_DISCOVERY_PREFIX: &str = {};\n",
+        to_rust_str(&cfg.homeassistant.discovery_prefix)
+    ));
+    body.push_str(&format!(
+        "pub static GEN_HA_DEVICE_ID: &str = {};\n",
+        to_rust_str(&cfg.device.id)
+    ));
+    body.push_str(&format!(
+        "pub static GEN_HA_DEVICE_NAME: &str = {};\n",
+        to_rust_str(&cfg.device.name)
+    ));
+    body.push_str(&format!(
+        "pub static GEN_HA_MANUFACTURER: &str = {};\n",
+        to_rust_str(&cfg.device.manufacturer)
+    ));
+    body.push_str(&format!(
+        "pub static GEN_HA_MODEL: &str = {};\n",
+        to_rust_str(&cfg.device.model)
+    ));
+
+    let first_state_topic = first_sensor
+        .mqtt
+        .as_ref()
+        .map(|m| m.state_topic.as_str())
+        .unwrap_or("hydrolevel/state");
+
+    body.push_str(&format!(
+        "pub static GEN_MQTT_STATE_TOPIC: &str = {};\n",
+        to_rust_str(first_state_topic)
+    ));
+    body.push_str(&format!(
+        "pub static GEN_MQTT_AVAILABILITY_TOPIC: &str = {};\n",
+        to_rust_str(&cfg.availability.topic)
+    ));
+
+    body.push_str(&format!("pub static GEN_SENSOR_GPIO: u32 = {};\n", first_sensor.pin));
+    body.push_str(&format!(
+        "pub static GEN_SENSOR_ACTIVE_HIGH: bool = {};\n",
+        first_sensor.active_high
+    ));
+    body.push_str(&format!(
+        "pub static GEN_SENSOR_DEBOUNCE_MS: u64 = {};\n",
+        first_sensor.debounce_ms
+    ));
+
+    body
+}
+
+fn generate_certs_rs(
+    manifest_dir: &Path,
+    cfg: &DeviceToml,
+    env_vars: &BTreeMap<String, String>,
+) -> String {
+    let tls = cfg.mqtt.tls.as_ref();
+    let ca_path = normalize_optional_str(tls.and_then(|t| t.ca_cert_path.as_deref()))
+        .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CA_CERT_PATH"));
+    let cert_path = normalize_optional_str(tls.and_then(|t| t.client_cert_path.as_deref()))
+        .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_CERT_PATH"));
+    let key_path = normalize_optional_str(tls.and_then(|t| t.client_key_path.as_deref()))
+        .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_KEY_PATH"));
+
+    let ca_cert = read_optional_bytes(manifest_dir, ca_path.as_deref(), "mqtt.tls.ca_cert_path");
+    let client_cert =
+        read_optional_bytes(manifest_dir, cert_path.as_deref(), "mqtt.tls.client_cert_path");
+    let client_key =
+        read_optional_bytes(manifest_dir, key_path.as_deref(), "mqtt.tls.client_key_path");
+
+    assert!(
+        client_cert.is_some() == client_key.is_some(),
+        "TLS client cert/key mismatch after resolution"
+    );
+
+    format!(
         "// Auto-generated by build.rs – do not edit\n\
          pub static MQTT_CA_CERT: Option<&'static [u8]> = {ca};\n\
          pub static MQTT_CLIENT_CERT: Option<&'static [u8]> = {cc};\n\
@@ -99,34 +366,37 @@ fn main() {
         ca = bytes_option_literal(&ca_cert),
         cc = bytes_option_literal(&client_cert),
         ck = bytes_option_literal(&client_key),
-    );
-
-    fs::write(&certs_rs, certs_content).expect("failed to write certs.rs");
-
-    // ── 4. esp-idf-svc / embuild link configuration ───────────────────────────
-    embuild::espidf::sysenv::output();
+    )
 }
 
-/// Read certificate bytes from the path given by `env_key`, or return None.
-fn read_cert_env(env_key: &str) -> Option<Vec<u8>> {
-    let path_str = env::var(env_key).unwrap_or_default();
-    if path_str.is_empty() {
+fn env_optional(vars: &BTreeMap<String, String>, key: &str) -> Option<String> {
+    vars.get(key)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn read_optional_bytes(
+    manifest_dir: &Path,
+    path_value: Option<&str>,
+    field_name: &str,
+) -> Option<Vec<u8>> {
+    let Some(path_value) = path_value else {
         return None;
-    }
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let path: PathBuf = if Path::new(&path_str).is_absolute() {
-        PathBuf::from(&path_str)
-    } else {
-        Path::new(&manifest_dir).join(&path_str)
     };
 
-    if !path.exists() {
-        println!(
-            "cargo:warning={env_key} points to '{}' which does not exist – skipping TLS cert",
-            path.display()
-        );
-        return None;
-    }
+    let path: PathBuf = if Path::new(path_value).is_absolute() {
+        PathBuf::from(path_value)
+    } else {
+        manifest_dir.join(path_value)
+    };
+
+    assert!(
+        path.exists(),
+        "{field_name} points to '{}' which does not exist",
+        path.display()
+    );
 
     println!("cargo:rerun-if-changed={}", path.display());
     Some(
@@ -135,7 +405,6 @@ fn read_cert_env(env_key: &str) -> Option<Vec<u8>> {
     )
 }
 
-/// Render a Vec<u8> as a Rust `Some(&[...])` or `None` literal.
 fn bytes_option_literal(bytes: &Option<Vec<u8>>) -> String {
     match bytes {
         None => "None".to_string(),
@@ -143,5 +412,16 @@ fn bytes_option_literal(bytes: &Option<Vec<u8>>) -> String {
             let hex: Vec<String> = data.iter().map(|b| format!("0x{b:02x}")).collect();
             format!("Some(&[{}])", hex.join(", "))
         }
+    }
+}
+
+fn to_rust_str(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn option_str_literal(value: Option<&str>) -> String {
+    match value {
+        Some(v) => format!("Some({})", to_rust_str(v)),
+        None => "None".to_string(),
     }
 }

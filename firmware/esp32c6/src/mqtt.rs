@@ -7,22 +7,21 @@
 //  • Certificate-based mutual TLS (mTLS) when client_cert + client_key are set
 //  • Home Assistant MQTT discovery protocol for binary_sensor entities
 //
-// The HA discovery payload published to
-//   <discovery_prefix>/binary_sensor/<device_id>/liquid_level/config
-// makes the sensor appear automatically in HA without manual configuration.
+// HA discovery payloads are published to
+//   <discovery_prefix>/binary_sensor/<device_id>/<object_id>/config
+// so each configured binary sensor appears automatically in HA.
 
 use anyhow::{bail, Result};
 use esp_idf_svc::mqtt::client::{
     EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
 use log::{error, info, warn};
-use plantfriend_core::homeassistant::{
-    liquid_level_discovery_payload, liquid_level_state_payload, DeviceMetadata,
-};
+use plantfriend_core::homeassistant::{binary_sensor_discovery_payload, DeviceMetadata};
 use plantfriend_core::mqtt::{
-    liquid_level_discovery_topic, AVAILABILITY_OFFLINE, AVAILABILITY_ONLINE,
+    binary_sensor_discovery_topic, AVAILABILITY_OFFLINE, AVAILABILITY_ONLINE,
 };
-use plantfriend_core::sensors::LiquidState;
+use plantfriend_core::sensors::{LiquidState, MqttState};
+use std::collections::BTreeMap;
 
 use crate::config::{Config, TlsConfig};
 
@@ -31,10 +30,15 @@ use crate::config::{Config, TlsConfig};
 /// Manages the MQTT connection and publishes sensor state + HA discovery.
 pub struct MqttManager {
     client: EspMqttClient<'static>,
-    state_topic: String,
     availability_topic: String,
-    discovery_topic: String,
-    discovery_payload: String,
+    sensors: BTreeMap<String, SensorPublishBinding>,
+    discovery_messages: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+struct SensorPublishBinding {
+    mqtt_enabled: bool,
+    state_topic: Option<String>,
 }
 
 impl MqttManager {
@@ -86,60 +90,149 @@ impl MqttManager {
         })?;
 
         // ── Build topic strings ───────────────────────────────────────────────
-        let state_topic = ha.state_topic.to_string();
         let availability_topic = ha.availability_topic.to_string();
 
-        let discovery_topic = liquid_level_discovery_topic(ha.discovery_prefix, ha.device_id);
+        let mut sensors: BTreeMap<String, SensorPublishBinding> = BTreeMap::new();
+        let mut discovery_messages: Vec<(String, String)> = Vec::new();
 
-        // ── Build HA discovery payload ────────────────────────────────────────
-        let discovery_payload = liquid_level_discovery_payload(
-            DeviceMetadata {
-                device_id: ha.device_id,
-                device_name: ha.device_name,
-                model: "XKC-Y25-NPN",
-                manufacturer: "Hydrolevel / ESP32",
-            },
-            ha.state_topic,
-            ha.availability_topic,
-        )?;
+        for spec in config.runtime.sensors {
+            let state_topic = spec.mqtt_state_topic.map(str::to_owned);
+            if spec.outputs.mqtt && state_topic.is_none() {
+                bail!(
+                    "Sensor '{}' has mqtt output enabled but no mqtt_state_topic",
+                    spec.id
+                );
+            }
+
+            sensors.insert(
+                spec.id.to_string(),
+                SensorPublishBinding {
+                    mqtt_enabled: spec.outputs.mqtt,
+                    state_topic: state_topic.clone(),
+                },
+            );
+
+            if spec.outputs.homeassistant {
+                let object_id = spec.ha_object_id.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Sensor '{}' has Home Assistant output enabled but no ha_object_id",
+                        spec.id
+                    )
+                })?;
+                let name = spec.ha_name.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Sensor '{}' has Home Assistant output enabled but no ha_name",
+                        spec.id
+                    )
+                })?;
+                let device_class = spec.ha_device_class.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Sensor '{}' has Home Assistant output enabled but no ha_device_class",
+                        spec.id
+                    )
+                })?;
+                let state_topic = state_topic.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Sensor '{}' needs mqtt_state_topic for Home Assistant discovery",
+                        spec.id
+                    )
+                })?;
+
+                let discovery_topic =
+                    binary_sensor_discovery_topic(ha.discovery_prefix, ha.device_id, object_id);
+
+                let discovery_payload = binary_sensor_discovery_payload(
+                    DeviceMetadata {
+                        device_id: ha.device_id,
+                        device_name: ha.device_name,
+                        model: crate::config::GEN_HA_MODEL,
+                        manufacturer: crate::config::GEN_HA_MANUFACTURER,
+                    },
+                    object_id,
+                    name,
+                    device_class,
+                    &state_topic,
+                    ha.availability_topic,
+                )?;
+
+                discovery_messages.push((discovery_topic, discovery_payload));
+            }
+        }
 
         Ok(Self {
             client,
-            state_topic,
             availability_topic,
-            discovery_topic,
-            discovery_payload,
+            sensors,
+            discovery_messages,
         })
     }
 
-    /// Publish the Home Assistant MQTT discovery payload (retained).
+    /// Publish all Home Assistant MQTT discovery payloads (retained).
     pub fn publish_discovery(&mut self) -> Result<()> {
-        info!("Publishing HA discovery to: {}", self.discovery_topic);
-        self.client.enqueue(
-            &self.discovery_topic,
-            QoS::AtLeastOnce,
-            true, // retained so HA picks it up after restart
-            self.discovery_payload.as_bytes(),
-        )?;
+        for (topic, payload) in &self.discovery_messages {
+            info!("Publishing HA discovery to: {}", topic);
+            self.client.enqueue(
+                topic,
+                QoS::AtLeastOnce,
+                true, // retained so HA picks it up after restart
+                payload.as_bytes(),
+            )?;
+        }
         Ok(())
     }
 
     /// Announce that the device is online (retained availability message).
     pub fn publish_online(&mut self) -> Result<()> {
         let topic = self.availability_topic.clone();
-        self.client
-            .enqueue(&topic, QoS::AtLeastOnce, true, AVAILABILITY_ONLINE.as_bytes())?;
+        self.client.enqueue(
+            &topic,
+            QoS::AtLeastOnce,
+            true,
+            AVAILABILITY_ONLINE.as_bytes(),
+        )?;
         Ok(())
     }
 
-    /// Publish the current liquid level state.
-    pub fn publish_state(&mut self, state: LiquidState) -> Result<()> {
-        let topic = self.state_topic.clone();
-        let payload = liquid_level_state_payload(state).as_bytes();
-        info!("Publishing state '{}' → {}", liquid_level_state_payload(state), topic);
+    /// Publish the current state for a specific sensor id.
+    pub fn publish_state_for_sensor<S>(&mut self, sensor_id: &str, state: S) -> Result<()>
+    where
+        S: MqttState,
+    {
+        let Some(binding) = self.sensors.get(sensor_id) else {
+            bail!("Unknown sensor id '{}': cannot publish state", sensor_id);
+        };
+
+        if !binding.mqtt_enabled {
+            return Ok(());
+        }
+
+        let Some(topic) = binding.state_topic.as_deref() else {
+            bail!(
+                "Sensor '{}' has mqtt output enabled but no state topic is configured",
+                sensor_id
+            );
+        };
+
+        let payload_state = state.as_mqtt_state();
+        let payload = payload_state.as_bytes();
+        info!(
+            "Publishing sensor '{}' state '{}' → {}",
+            sensor_id, payload_state, topic
+        );
         self.client
-            .enqueue(&topic, QoS::AtLeastOnce, false, payload)?;
+            .enqueue(topic, QoS::AtLeastOnce, false, payload)?;
         Ok(())
+    }
+
+    /// Legacy single-sensor publish path using the first configured sensor.
+    pub fn publish_state(&mut self, state: LiquidState) -> Result<()> {
+        let first_id = self
+            .sensors
+            .keys()
+            .next()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No sensor bindings configured for publish"))?;
+        self.publish_state_for_sensor(&first_id, state)
     }
 }
 

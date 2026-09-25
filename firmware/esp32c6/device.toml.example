@@ -1,0 +1,71 @@
+schema_version = 1
+
+[device]
+id = "PLANTFRIEND_01"
+name = "PlantFriend Sensor"
+manufacturer = "PlantFriend / ESP32"
+model = "XKC-Y25-NPN"
+
+[wifi]
+ssid = "MyNetwork"
+password = "MyPassword"
+
+[mqtt]
+broker_uri = "mqtt://homeassistant.local:1883"
+username = ""
+password = ""
+client_id = "plantfriend-01"
+
+[mqtt.tls]
+ca_cert_path = ""
+client_cert_path = ""
+client_key_path = ""
+
+[publish]
+interval_ms = 30000
+
+[homeassistant]
+discovery_prefix = "homeassistant"
+
+[availability]
+topic = "plantfriend/PLANTFRIEND_01/availability"
+
+[[sensors]]
+id = "liquid_level"
+kind = "xkc_y25"
+pin = 4
+active_high = false
+debounce_ms = 200
+
+[sensors.outputs]
+mqtt = true
+homeassistant = true
+bthome = false
+
+[sensors.mqtt]
+state_topic = "plantfriend/PLANTFRIEND_01/state"
+
+[sensors.homeassistant]
+object_id = "liquid_level"
+name = "Liquid Level"
+device_class = "moisture"
+
+[[sensors]]
+id = "reservoir_float"
+kind = "basic_float"
+pin = 5
+active_high = false
+debounce_ms = 100
+
+[sensors.outputs]
+mqtt = true
+homeassistant = true
+bthome = false
+
+[sensors.mqtt]
+state_topic = "plantfriend/PLANTFRIEND_01/reservoir_float/state"
+
+[sensors.homeassistant]
+object_id = "reservoir_float"
+name = "Reservoir Float Switch"
+device_class = "problem"
