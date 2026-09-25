@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/plantfriend-core",
+    "crates/esp32c6-build-config-tests",
     "firmware/esp32c6",
     "firmware/nrf52840",
 ]

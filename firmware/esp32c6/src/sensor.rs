@@ -1,4 +1,4 @@
-// src/sensor.rs – XKC-Y25-NPN capacitive liquid level sensor driver
+// src/sensor.rs – Digital-input binary sensor drivers
 //
 // The XKC-Y25-NPN sensor has an NPN open-collector digital output:
 //   • Output LOW (pulled to GND) → liquid detected (sensor activated)
@@ -8,7 +8,7 @@
 // (XKC, float switch variants, inverted wiring, etc.).
 //
 // Reading the sensor in a loop with a software debounce is intentionally simple
-// and compatible with the single-core ESP32-C3.  Future sensors (e.g., DS18B20
+// and compatible with the single-core ESP32-C6.  Future sensors (e.g., DS18B20
 // temperature, DHT22 humidity, analog pH probe) can be added as additional
 // modules without modifying this file.
 
@@ -17,18 +17,25 @@ use std::time::Instant;
 use esp_idf_svc::hal::gpio::{AnyInputPin, Input, PinDriver, Pull};
 use log::debug;
 use plantfriend_core::sensors::{
-    decode_digital_input_state, DigitalInputSensorConfig, LiquidLevelDebouncer, LiquidState,
+    decode_digital_input_state, DigitalInputDebouncer, DigitalInputSensorConfig,
+    DigitalSignalState, FloatSwitchState, LiquidState,
 };
 
-/// Driver for digital input sensors that map to `LiquidState`.
-pub struct LiquidLevelSensor<'d> {
+/// Generic driver for digital input sensors with debounced binary state.
+pub struct DigitalInputSensor<'d, S>
+where
+    S: DigitalSignalState,
+{
     pin: PinDriver<'d, Input>,
     active_high: bool,
     started_at: Instant,
-    debouncer: LiquidLevelDebouncer,
+    debouncer: DigitalInputDebouncer<S>,
 }
 
-impl<'d> LiquidLevelSensor<'d> {
+impl<'d, S> DigitalInputSensor<'d, S>
+where
+    S: DigitalSignalState,
+{
     /// Initialise the sensor driver from explicit digital input logic settings.
     pub fn new_with_logic(
         pin: AnyInputPin<'d>,
@@ -45,7 +52,7 @@ impl<'d> LiquidLevelSensor<'d> {
             pin: driver,
             active_high: logic.active_high,
             started_at: Instant::now(),
-            debouncer: LiquidLevelDebouncer::new(initial, logic.debounce_ms),
+            debouncer: DigitalInputDebouncer::new(initial, logic.debounce_ms),
         })
     }
 
@@ -55,11 +62,7 @@ impl<'d> LiquidLevelSensor<'d> {
     /// * `pin`    – GPIO pin configured as floating input (pull-up applied here).
     /// * `active_high` – Whether a HIGH level represents sensor active.
     /// * `debounce_ms` – Software debounce window in milliseconds.
-    pub fn new(
-        pin: AnyInputPin<'d>,
-        active_high: bool,
-        debounce_ms: u64,
-    ) -> anyhow::Result<Self> {
+    pub fn new(pin: AnyInputPin<'d>, active_high: bool, debounce_ms: u64) -> anyhow::Result<Self> {
         Self::new_with_logic(
             pin,
             DigitalInputSensorConfig {
@@ -84,7 +87,7 @@ impl<'d> LiquidLevelSensor<'d> {
     /// Poll the sensor and return the new stable state if it has changed.
     ///
     /// Returns `Some(state)` on a debounced state transition, `None` otherwise.
-    pub fn poll(&mut self) -> Option<LiquidState> {
+    pub fn poll(&mut self) -> Option<S> {
         let raw = Self::read_raw(&self.pin, self.active_high);
         let now_ms = self.started_at.elapsed().as_millis() as u64;
 
@@ -98,17 +101,17 @@ impl<'d> LiquidLevelSensor<'d> {
 
     /// Return the current debounced (stable) state without triggering a change
     /// event.  Useful for the initial publish on startup.
-    pub fn state(&self) -> LiquidState {
+    pub fn state(&self) -> S {
         self.debouncer.stable()
     }
 
     // ── private ──────────────────────────────────────────────────────────────
 
-    fn read_raw(
-        pin: &PinDriver<'_, Input>,
-        active_high: bool,
-    ) -> LiquidState {
+    fn read_raw(pin: &PinDriver<'_, Input>, active_high: bool) -> S {
         let level = pin.is_high();
         decode_digital_input_state(level, active_high)
     }
 }
+
+pub type LiquidLevelSensor<'d> = DigitalInputSensor<'d, LiquidState>;
+pub type FloatSwitchSensor<'d> = DigitalInputSensor<'d, FloatSwitchState>;
