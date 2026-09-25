@@ -24,6 +24,7 @@ target
 
 # User-specific environment / secrets – never commit this
 **/.env
+**/device.toml
 
 # ESP-IDF build artefacts
 build/
