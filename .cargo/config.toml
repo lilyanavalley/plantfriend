@@ -7,7 +7,7 @@ target = "riscv32imac-esp-espidf"
 linker = "ldproxy"
 # Flash the firmware and open the serial monitor after a successful build.
 # Install with: `cargo install espflash`
-runner = "espflash flash --monitor"
+runner = "espflash flash --monitor --partition-table firmware/esp32c6/partitions.csv"
 rustflags = [
     # Enable 64-bit time_t on ESP-IDF (avoids the year-2038 problem).
     "--cfg", "espidf_time64",
@@ -32,6 +32,8 @@ rustflags = [
 [env]
 ESP_IDF_VERSION = "v5.2.1"
 MCU = "esp32c6"
+ESP_IDF_SYS_ROOT_CRATE = "esp32c6"
+ESP_IDF_SDKCONFIG_DEFAULTS = "firmware/esp32c6/sdkconfig.defaults"
 
 [unstable]
 # Build std + panic_abort from source for the embedded target.
