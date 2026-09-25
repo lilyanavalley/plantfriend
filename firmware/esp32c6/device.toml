@@ -49,3 +49,23 @@ state_topic = "hydrolevel/PLANTFRIEND_01/state"
 object_id = "liquid_level"
 name = "Liquid Level"
 device_class = "moisture"
+
+[[sensors]]
+id = "reservoir_float"
+kind = "basic_float"
+pin = 5
+active_high = false
+debounce_ms = 100
+
+[sensors.outputs]
+mqtt = true
+homeassistant = true
+bthome = false
+
+[sensors.mqtt]
+state_topic = "hydrolevel/PLANTFRIEND_01/reservoir_float/state"
+
+[sensors.homeassistant]
+object_id = "reservoir_float"
+name = "Reservoir Float Switch"
+device_class = "problem"

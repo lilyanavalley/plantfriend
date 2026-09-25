@@ -90,6 +90,31 @@ pub struct SensorHomeAssistant {
     pub device_class: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensorRuntimeDriverKind {
+    XkcY25,
+    BasicFloat,
+}
+
+impl SensorRuntimeDriverKind {
+    pub fn from_device_kind(kind: &str) -> Result<Self, String> {
+        match kind {
+            "xkc_y25" => Ok(Self::XkcY25),
+            "basic_float" => Ok(Self::BasicFloat),
+            _ => Err(format!(
+                "Unsupported sensor kind '{kind}'. Supported kinds: xkc_y25, basic_float"
+            )),
+        }
+    }
+
+    pub fn generated_sensor_kind_variant(self) -> &'static str {
+        match self {
+            Self::XkcY25 => "GeneratedSensorKind::XkcY25",
+            Self::BasicFloat => "GeneratedSensorKind::BasicFloat",
+        }
+    }
+}
+
 pub fn parse_device_toml(content: &str) -> Result<DeviceToml, String> {
     toml::from_str(content).map_err(|e| e.to_string())
 }
@@ -142,7 +167,10 @@ pub fn validate_device_toml(cfg: &DeviceToml) -> Result<(), String> {
 
     for sensor in &cfg.sensors {
         if !sensor_ids.insert(sensor.id.clone()) {
-            return Err(format!("Duplicate sensor id '{}' in [[sensors]]", sensor.id));
+            return Err(format!(
+                "Duplicate sensor id '{}' in [[sensors]]",
+                sensor.id
+            ));
         }
 
         if !pins.insert(sensor.pin) {
@@ -152,12 +180,7 @@ pub fn validate_device_toml(cfg: &DeviceToml) -> Result<(), String> {
             ));
         }
 
-        if !matches!(sensor.kind.as_str(), "xkc_y25" | "basic_float") {
-            return Err(format!(
-                "Unsupported sensor kind '{}'. Supported kinds: xkc_y25, basic_float",
-                sensor.kind
-            ));
-        }
+        SensorRuntimeDriverKind::from_device_kind(sensor.kind.as_str())?;
 
         if sensor.outputs.mqtt {
             let Some(mqtt) = sensor.mqtt.as_ref() else {
@@ -227,7 +250,7 @@ pub fn normalize_optional_str(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_device_toml, validate_device_toml};
+    use super::{parse_device_toml, validate_device_toml, SensorRuntimeDriverKind};
 
     const VALID_CONFIG: &str = r#"
 schema_version = 1
@@ -280,7 +303,10 @@ device_class = "moisture"
     fn valid_config_passes_validation() {
         let cfg = parse_device_toml(VALID_CONFIG).expect("valid TOML should parse");
         let result = validate_device_toml(&cfg);
-        assert!(result.is_ok(), "expected validation to pass, got {result:?}");
+        assert!(
+            result.is_ok(),
+            "expected validation to pass, got {result:?}"
+        );
     }
 
     #[test]
@@ -296,9 +322,41 @@ device_class = "moisture"
 
     #[test]
     fn missing_mqtt_block_fails_when_mqtt_enabled() {
-        let config = VALID_CONFIG.replace("[sensors.mqtt]\nstate_topic = \"hydrolevel/dev-01/state\"\n", "");
+        let config = VALID_CONFIG.replace(
+            "[sensors.mqtt]\nstate_topic = \"hydrolevel/dev-01/state\"\n",
+            "",
+        );
         let cfg = parse_device_toml(&config).expect("test TOML should parse");
         let err = validate_device_toml(&cfg).expect_err("missing mqtt block should fail");
-        assert!(err.contains("enables MQTT output"), "unexpected error: {err}");
+        assert!(
+            err.contains("enables MQTT output"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn sensor_kind_maps_to_runtime_driver_variants() {
+        assert_eq!(
+            SensorRuntimeDriverKind::from_device_kind("xkc_y25")
+                .expect("xkc_y25 should map")
+                .generated_sensor_kind_variant(),
+            "GeneratedSensorKind::XkcY25"
+        );
+        assert_eq!(
+            SensorRuntimeDriverKind::from_device_kind("basic_float")
+                .expect("basic_float should map")
+                .generated_sensor_kind_variant(),
+            "GeneratedSensorKind::BasicFloat"
+        );
+    }
+
+    #[test]
+    fn unsupported_sensor_kind_returns_explicit_error() {
+        let err = SensorRuntimeDriverKind::from_device_kind("unknown_kind")
+            .expect_err("unknown kind should fail");
+        assert!(
+            err.contains("Unsupported sensor kind"),
+            "unexpected error: {err}"
+        );
     }
 }
