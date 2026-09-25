@@ -182,7 +182,7 @@ fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
         let mqtt_topic = sensor
             .mqtt
             .as_ref()
-            .map(|m| to_rust_str(&m.state_topic))
+            .map(|m| format!("Some({})", to_rust_str(&m.state_topic)))
             .unwrap_or_else(|| "None".to_string());
 
         let (ha_object_id, ha_name, ha_device_class) = match &sensor.homeassistant {
