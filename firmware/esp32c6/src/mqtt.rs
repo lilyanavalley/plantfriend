@@ -7,22 +7,20 @@
 //  • Certificate-based mutual TLS (mTLS) when client_cert + client_key are set
 //  • Home Assistant MQTT discovery protocol for binary_sensor entities
 //
-// The HA discovery payload published to
-//   <discovery_prefix>/binary_sensor/<device_id>/liquid_level/config
-// makes the sensor appear automatically in HA without manual configuration.
+// HA discovery payloads are published to
+//   <discovery_prefix>/binary_sensor/<device_id>/<object_id>/config
+// so each configured binary sensor appears automatically in HA.
 
 use anyhow::{bail, Result};
 use esp_idf_svc::mqtt::client::{
     EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
 use log::{error, info, warn};
-use plantfriend_core::homeassistant::{
-    binary_sensor_discovery_payload, liquid_level_state_payload, DeviceMetadata,
-};
+use plantfriend_core::homeassistant::{binary_sensor_discovery_payload, DeviceMetadata};
 use plantfriend_core::mqtt::{
     binary_sensor_discovery_topic, AVAILABILITY_OFFLINE, AVAILABILITY_ONLINE,
 };
-use plantfriend_core::sensors::LiquidState;
+use plantfriend_core::sensors::{LiquidState, MqttState};
 use std::collections::BTreeMap;
 
 use crate::config::{Config, TlsConfig};
@@ -186,13 +184,20 @@ impl MqttManager {
     /// Announce that the device is online (retained availability message).
     pub fn publish_online(&mut self) -> Result<()> {
         let topic = self.availability_topic.clone();
-        self.client
-            .enqueue(&topic, QoS::AtLeastOnce, true, AVAILABILITY_ONLINE.as_bytes())?;
+        self.client.enqueue(
+            &topic,
+            QoS::AtLeastOnce,
+            true,
+            AVAILABILITY_ONLINE.as_bytes(),
+        )?;
         Ok(())
     }
 
     /// Publish the current state for a specific sensor id.
-    pub fn publish_state_for_sensor(&mut self, sensor_id: &str, state: LiquidState) -> Result<()> {
+    pub fn publish_state_for_sensor<S>(&mut self, sensor_id: &str, state: S) -> Result<()>
+    where
+        S: MqttState,
+    {
         let Some(binding) = self.sensors.get(sensor_id) else {
             bail!("Unknown sensor id '{}': cannot publish state", sensor_id);
         };
@@ -208,12 +213,11 @@ impl MqttManager {
             );
         };
 
-        let payload = liquid_level_state_payload(state).as_bytes();
+        let payload_state = state.as_mqtt_state();
+        let payload = payload_state.as_bytes();
         info!(
             "Publishing sensor '{}' state '{}' → {}",
-            sensor_id,
-            liquid_level_state_payload(state),
-            topic
+            sensor_id, payload_state, topic
         );
         self.client
             .enqueue(topic, QoS::AtLeastOnce, false, payload)?;

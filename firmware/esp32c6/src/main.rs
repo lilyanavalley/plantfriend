@@ -27,16 +27,103 @@ use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
 use log::{error, info, warn};
 use plantfriend_core::publish::{MonotonicClock, PublishReason, StatePublishPolicy};
-use plantfriend_core::sensors::LiquidState;
+use plantfriend_core::sensors::{FloatSwitchState, LiquidState};
 
-use config::{Config, GeneratedSensorRuntimeSpec};
+use config::{Config, GeneratedSensorKind, GeneratedSensorRuntimeSpec};
 use mqtt::MqttManager;
-use sensor::LiquidLevelSensor;
+use sensor::{FloatSwitchSensor, LiquidLevelSensor};
 
-struct ActiveSensor<'d> {
-    spec: &'static GeneratedSensorRuntimeSpec,
-    sensor: LiquidLevelSensor<'d>,
-    publish_policy: StatePublishPolicy<LiquidState>,
+enum ActiveSensor<'d> {
+    XkcY25 {
+        spec: &'static GeneratedSensorRuntimeSpec,
+        sensor: LiquidLevelSensor<'d>,
+        publish_policy: StatePublishPolicy<LiquidState>,
+    },
+    BasicFloat {
+        spec: &'static GeneratedSensorRuntimeSpec,
+        sensor: FloatSwitchSensor<'d>,
+        publish_policy: StatePublishPolicy<FloatSwitchState>,
+    },
+}
+
+impl<'d> ActiveSensor<'d> {
+    fn publish_initial(&mut self, mqtt: &mut MqttManager) -> Result<()> {
+        match self {
+            ActiveSensor::XkcY25 {
+                spec,
+                publish_policy,
+                ..
+            } => {
+                if let Some(initial) = publish_policy.initial_event() {
+                    mqtt.publish_state_for_sensor(spec.id, initial.state)?;
+                }
+            }
+            ActiveSensor::BasicFloat {
+                spec,
+                publish_policy,
+                ..
+            } => {
+                if let Some(initial) = publish_policy.initial_event() {
+                    mqtt.publish_state_for_sensor(spec.id, initial.state)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn poll_and_publish_state(&mut self, mqtt: &mut MqttManager, uptime_clock: &UptimeClock) {
+        match self {
+            ActiveSensor::XkcY25 {
+                spec,
+                sensor,
+                publish_policy,
+            } => {
+                if let Some(new_state) = sensor.poll() {
+                    if let Some(event) = publish_policy.on_state_change(new_state) {
+                        if let Err(e) = mqtt.publish_state_for_sensor(spec.id, event.state) {
+                            error!(
+                                "Failed to publish sensor '{}' state update ({:?}): {e}",
+                                spec.id, event.reason
+                            );
+                        }
+                    }
+                }
+
+                if let Some(event) = publish_policy.on_tick_with_clock(uptime_clock) {
+                    if matches!(event.reason, PublishReason::Heartbeat) {
+                        if let Err(e) = mqtt.publish_state_for_sensor(spec.id, event.state) {
+                            warn!("Heartbeat publish failed for sensor '{}': {e}", spec.id);
+                        }
+                    }
+                }
+            }
+            ActiveSensor::BasicFloat {
+                spec,
+                sensor,
+                publish_policy,
+            } => {
+                if let Some(new_state) = sensor.poll() {
+                    if let Some(event) = publish_policy.on_state_change(new_state) {
+                        if let Err(e) = mqtt.publish_state_for_sensor(spec.id, event.state) {
+                            error!(
+                                "Failed to publish sensor '{}' state update ({:?}): {e}",
+                                spec.id, event.reason
+                            );
+                        }
+                    }
+                }
+
+                if let Some(event) = publish_policy.on_tick_with_clock(uptime_clock) {
+                    if matches!(event.reason, PublishReason::Heartbeat) {
+                        if let Err(e) = mqtt.publish_state_for_sensor(spec.id, event.state) {
+                            warn!("Heartbeat publish failed for sensor '{}': {e}", spec.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 struct UptimeClock {
@@ -116,52 +203,57 @@ fn main() -> Result<()> {
         // SAFETY: We own `peripherals` exclusively (taken above). The build-time
         // validation guarantees unique GPIO assignment in the sensor list.
         let pin = unsafe { AnyInputPin::steal(spec.pin as u8) };
-        let sensor = LiquidLevelSensor::new(pin, spec.logic.active_high, spec.logic.debounce_ms)?;
+        match spec.kind {
+            GeneratedSensorKind::XkcY25 => {
+                let sensor =
+                    LiquidLevelSensor::new(pin, spec.logic.active_high, spec.logic.debounce_ms)?;
 
-        info!("Configured sensor '{}' on GPIO {}", spec.id, spec.pin);
+                info!(
+                    "Configured xkc_y25 sensor '{}' on GPIO {}",
+                    spec.id, spec.pin
+                );
 
-        sensors.push(ActiveSensor {
-            spec,
-            publish_policy: StatePublishPolicy::with_clock(
-                sensor.state(),
-                heartbeat_interval_ms,
-                &uptime_clock,
-            ),
-            sensor,
-        });
+                sensors.push(ActiveSensor::XkcY25 {
+                    spec,
+                    publish_policy: StatePublishPolicy::with_clock(
+                        sensor.state(),
+                        heartbeat_interval_ms,
+                        &uptime_clock,
+                    ),
+                    sensor,
+                });
+            }
+            GeneratedSensorKind::BasicFloat => {
+                let sensor =
+                    FloatSwitchSensor::new(pin, spec.logic.active_high, spec.logic.debounce_ms)?;
+
+                info!(
+                    "Configured basic_float sensor '{}' on GPIO {}",
+                    spec.id, spec.pin
+                );
+
+                sensors.push(ActiveSensor::BasicFloat {
+                    spec,
+                    publish_policy: StatePublishPolicy::with_clock(
+                        sensor.state(),
+                        heartbeat_interval_ms,
+                        &uptime_clock,
+                    ),
+                    sensor,
+                });
+            }
+        }
     }
 
     // Publish initial sensor states so HA doesn't show "unavailable".
     for runtime in &mut sensors {
-        if let Some(initial) = runtime.publish_policy.initial_event() {
-            mqtt.publish_state_for_sensor(runtime.spec.id, initial.state)?;
-        }
+        runtime.publish_initial(&mut mqtt)?;
     }
 
     info!("Entering main loop");
     loop {
         for runtime in &mut sensors {
-            // Poll sensor for debounced state change.
-            if let Some(new_state) = runtime.sensor.poll() {
-                if let Some(event) = runtime.publish_policy.on_state_change(new_state) {
-                    if let Err(e) = mqtt.publish_state_for_sensor(runtime.spec.id, event.state) {
-                        error!(
-                            "Failed to publish sensor '{}' state update ({:?}): {e}",
-                            runtime.spec.id,
-                            event.reason
-                        );
-                    }
-                }
-            }
-
-            // Periodic heartbeat publish keeps HA state fresh after broker restart.
-            if let Some(event) = runtime.publish_policy.on_tick_with_clock(&uptime_clock) {
-                if matches!(event.reason, PublishReason::Heartbeat) {
-                    if let Err(e) = mqtt.publish_state_for_sensor(runtime.spec.id, event.state) {
-                        warn!("Heartbeat publish failed for sensor '{}': {e}", runtime.spec.id);
-                    }
-                }
-            }
+            runtime.poll_and_publish_state(&mut mqtt, &uptime_clock);
         }
 
         // Yield to the ESP-IDF scheduler; prevents starving the Wi-Fi/MQTT stack.

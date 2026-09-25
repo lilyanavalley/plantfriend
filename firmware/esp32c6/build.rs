@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 #[path = "build_config.rs"]
 mod build_config;
 
-use build_config::{normalize_optional_str, DeviceToml};
+use build_config::{normalize_optional_str, DeviceToml, SensorRuntimeDriverKind};
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR missing");
@@ -175,11 +175,9 @@ fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
 
     body.push_str("pub static GENERATED_SENSOR_SPECS: &[GeneratedSensorRuntimeSpec] = &[\n");
     for sensor in &cfg.sensors {
-        let kind = match sensor.kind.as_str() {
-            "xkc_y25" => "GeneratedSensorKind::XkcY25",
-            "basic_float" => "GeneratedSensorKind::BasicFloat",
-            _ => unreachable!(),
-        };
+        let kind = SensorRuntimeDriverKind::from_device_kind(sensor.kind.as_str())
+            .expect("sensor kind should already be validated")
+            .generated_sensor_kind_variant();
 
         let mqtt_topic = sensor
             .mqtt
