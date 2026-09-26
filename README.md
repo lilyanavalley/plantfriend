@@ -38,6 +38,7 @@ Features:
 - MQTT 3.1.1 / MQTT 5 publishing
 - TLS / mTLS MQTT support
 - Home Assistant MQTT auto-discovery
+- AP-style Wi-Fi pairing portal with NVS credential persistence (survives OTA)
 
 ### nRF52 package
 
@@ -81,7 +82,14 @@ cp firmware/esp32c6/.env.example firmware/esp32c6/.env
 $EDITOR firmware/esp32c6/.env
 ```
 
-All `PLANTFRIEND_*` values are loaded at build time for the ESP32 package.
+Most `PLANTFRIEND_*` values are loaded at build time for the ESP32 package.
+
+Wi-Fi pairing behavior for ESP32-C6:
+- If NVS already contains paired Wi-Fi credentials, firmware connects to them.
+- If not, firmware starts a setup AP and web portal to collect SSID/password.
+- If connection fails with stored credentials, firmware falls back to setup AP.
+- Saved credentials are stored in the `nvs` partition, so OTA app swaps do not
+  erase pairing data.
 
 ## Flashing nRF52840
 

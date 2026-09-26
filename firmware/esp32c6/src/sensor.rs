@@ -34,10 +34,7 @@ impl<'d> LiquidLevelSensor<'d> {
     /// # Arguments
     /// * `pin`    – GPIO pin configured as floating input (pull-up applied here).
     /// * `config` – Sensor section from the firmware configuration.
-    pub fn new(
-        pin: AnyInputPin<'d>,
-        config: &SensorConfig,
-    ) -> anyhow::Result<Self> {
+    pub fn new(pin: AnyInputPin<'d>, config: &SensorConfig) -> anyhow::Result<Self> {
         // The XKC-Y25-NPN has an NPN open-collector output. A pull-up keeps
         // the line HIGH when the sensor is not activated.
         let driver = PinDriver::input(pin, Pull::Up)?;
@@ -76,10 +73,7 @@ impl<'d> LiquidLevelSensor<'d> {
 
     // ── private ──────────────────────────────────────────────────────────────
 
-    fn read_raw(
-        pin: &PinDriver<'_, Input>,
-        active_high: bool,
-    ) -> LiquidState {
+    fn read_raw(pin: &PinDriver<'_, Input>, active_high: bool) -> LiquidState {
         let level = pin.is_high();
         if level == active_high {
             LiquidState::Present

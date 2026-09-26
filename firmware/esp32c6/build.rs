@@ -7,8 +7,8 @@
 //     source file written to OUT_DIR.
 //  3. Run the embuild / esp-idf-svc link-time setup required for ESP-IDF.
 
-use std::env;
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 

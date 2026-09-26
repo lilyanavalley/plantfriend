@@ -77,7 +77,7 @@ fn main() -> Result<()> {
     // ── Wi-Fi ─────────────────────────────────────────────────────────────────
     // `_wifi` must remain alive for the duration of the program to keep the
     // Wi-Fi interface active.
-    let _wifi = wifi::connect(peripherals.modem, sysloop, nvs, &cfg.wifi)?;
+    let _wifi = wifi::connect(peripherals.modem, sysloop, nvs, &cfg)?;
 
     if cfg.ota.auto_apply_on_boot {
         if let Some(url) = cfg.ota.firmware_url {

@@ -127,8 +127,12 @@ impl MqttManager {
     /// Announce that the device is online (retained availability message).
     pub fn publish_online(&mut self) -> Result<()> {
         let topic = self.availability_topic.clone();
-        self.client
-            .enqueue(&topic, QoS::AtLeastOnce, true, AVAILABILITY_ONLINE.as_bytes())?;
+        self.client.enqueue(
+            &topic,
+            QoS::AtLeastOnce,
+            true,
+            AVAILABILITY_ONLINE.as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -136,7 +140,11 @@ impl MqttManager {
     pub fn publish_state(&mut self, state: LiquidState) -> Result<()> {
         let topic = self.state_topic.clone();
         let payload = liquid_level_state_payload(state).as_bytes();
-        info!("Publishing state '{}' → {}", liquid_level_state_payload(state), topic);
+        info!(
+            "Publishing state '{}' → {}",
+            liquid_level_state_payload(state),
+            topic
+        );
         self.client
             .enqueue(&topic, QoS::AtLeastOnce, false, payload)?;
         Ok(())

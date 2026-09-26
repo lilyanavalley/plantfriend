@@ -115,7 +115,10 @@ pub mod publish {
             None
         }
 
-        pub fn on_tick_with_clock(&mut self, clock: &impl MonotonicClock) -> Option<PublishEvent<S>> {
+        pub fn on_tick_with_clock(
+            &mut self,
+            clock: &impl MonotonicClock,
+        ) -> Option<PublishEvent<S>> {
             self.on_tick(clock.now_ms())
         }
     }
@@ -347,7 +350,10 @@ mod tests {
         assert_eq!(d.update(LiquidState::Present, 0), None);
         assert_eq!(d.update(LiquidState::Present, 50), None);
         assert_eq!(d.update(LiquidState::Present, 99), None);
-        assert_eq!(d.update(LiquidState::Present, 100), Some(LiquidState::Present));
+        assert_eq!(
+            d.update(LiquidState::Present, 100),
+            Some(LiquidState::Present)
+        );
         assert_eq!(d.stable(), LiquidState::Present);
     }
 
@@ -363,7 +369,10 @@ mod tests {
         assert_eq!(d.stable(), LiquidState::Absent);
 
         assert_eq!(d.update(LiquidState::Present, 200), None);
-        assert_eq!(d.update(LiquidState::Present, 301), Some(LiquidState::Present));
+        assert_eq!(
+            d.update(LiquidState::Present, 301),
+            Some(LiquidState::Present)
+        );
     }
 
     #[cfg(feature = "homeassistant-mqtt")]

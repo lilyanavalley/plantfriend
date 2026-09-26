@@ -1,9 +1,8 @@
 // src/config.rs – compile-time firmware configuration
 //
 // All values originate from the user's .env file (loaded by build.rs) and are
-// resolved at compile time via env!() / option_env!().  This keeps the runtime
-// footprint minimal: no SD-card, no NVS parser, no heap allocation needed for
-// configuration.
+// resolved at compile time via env!() / option_env!(). Runtime Wi-Fi pairing
+// credentials are stored separately in NVS by wifi.rs.
 //
 // To add a new sensor type (temperature, humidity, pH, etc.) in the future,
 // add a corresponding sub-struct here and extend .env.example with the
@@ -26,10 +25,16 @@ pub struct Config {
 }
 
 pub struct WifiConfig {
-    /// Wi-Fi SSID (network name).
-    pub ssid: &'static str,
-    /// Wi-Fi pre-shared key / password.
-    pub password: &'static str,
+    /// Optional bootstrap SSID (used only when no paired credentials exist).
+    pub bootstrap_ssid: Option<&'static str>,
+    /// Optional bootstrap password.
+    pub bootstrap_password: Option<&'static str>,
+    /// Optional AP SSID override for pairing mode.
+    pub pairing_ap_ssid: Option<&'static str>,
+    /// SoftAP channel used during pairing mode.
+    pub pairing_ap_channel: u8,
+    /// Maximum number of stations that can connect to the setup AP.
+    pub pairing_ap_max_connections: u16,
 }
 
 pub struct MqttConfig {
@@ -112,8 +117,16 @@ impl Config {
 
         Config {
             wifi: WifiConfig {
-                ssid: env!("PLANTFRIEND_WIFI_SSID"),
-                password: env!("PLANTFRIEND_WIFI_PASSWORD"),
+                bootstrap_ssid: option_env!("PLANTFRIEND_WIFI_BOOTSTRAP_SSID").and_then(non_empty),
+                bootstrap_password: option_env!("PLANTFRIEND_WIFI_BOOTSTRAP_PASSWORD")
+                    .and_then(non_empty),
+                pairing_ap_ssid: option_env!("PLANTFRIEND_PAIRING_AP_SSID").and_then(non_empty),
+                pairing_ap_channel: option_env!("PLANTFRIEND_PAIRING_AP_CHANNEL")
+                    .map(parse_u8)
+                    .unwrap_or(1),
+                pairing_ap_max_connections: option_env!("PLANTFRIEND_PAIRING_AP_MAX_CONNECTIONS")
+                    .map(parse_u16)
+                    .unwrap_or(4),
             },
             mqtt: MqttConfig {
                 broker_uri: env!("PLANTFRIEND_MQTT_BROKER_URI"),
@@ -162,6 +175,38 @@ const fn parse_u32(s: &str) -> u32 {
             "PLANTFRIEND_* numeric var must be a non-negative integer"
         );
         result = result * 10 + (b - b'0') as u32;
+        i += 1;
+    }
+    result
+}
+
+const fn parse_u8(s: &str) -> u8 {
+    let bytes = s.as_bytes();
+    let mut result: u8 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        assert!(
+            b >= b'0' && b <= b'9',
+            "PLANTFRIEND_* numeric var must be a non-negative integer"
+        );
+        result = result * 10 + (b - b'0') as u8;
+        i += 1;
+    }
+    result
+}
+
+const fn parse_u16(s: &str) -> u16 {
+    let bytes = s.as_bytes();
+    let mut result: u16 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        assert!(
+            b >= b'0' && b <= b'9',
+            "PLANTFRIEND_* numeric var must be a non-negative integer"
+        );
+        result = result * 10 + (b - b'0') as u16;
         i += 1;
     }
     result
