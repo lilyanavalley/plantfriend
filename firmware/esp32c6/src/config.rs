@@ -15,6 +15,7 @@ include!(concat!(env!("OUT_DIR"), "/certs.rs"));
 include!(concat!(env!("OUT_DIR"), "/generated_device_config.rs"));
 include!(concat!(env!("OUT_DIR"), "/runtime_contract.rs"));
 
+use plantfriend_core::outputs::neopixel::{NeopixelColorOrder, NeopixelLedConfig};
 use plantfriend_core::sensors::DigitalInputSensorConfig;
 
 /// Top-level configuration bundle available throughout the firmware.
@@ -101,6 +102,7 @@ pub struct OtaConfig {
 /// Build-generated sensor topology and output routing contract.
 pub struct RuntimeSensorContract {
     pub sensors: &'static [GeneratedSensorRuntimeSpec],
+    pub leds: &'static [GeneratedLedRuntimeSpec],
 }
 
 impl Config {
@@ -155,7 +157,27 @@ impl Config {
             },
             runtime: RuntimeSensorContract {
                 sensors: GENERATED_SENSOR_SPECS,
+                leds: GENERATED_LED_SPECS,
             },
+        }
+    }
+}
+
+impl GeneratedNeopixelColorOrder {
+    pub const fn into_core(self) -> NeopixelColorOrder {
+        match self {
+            GeneratedNeopixelColorOrder::Rgb => NeopixelColorOrder::Rgb,
+            GeneratedNeopixelColorOrder::Grb => NeopixelColorOrder::Grb,
+        }
+    }
+}
+
+impl GeneratedLedRuntimeSpec {
+    pub const fn neopixel_config(self) -> NeopixelLedConfig {
+        NeopixelLedConfig {
+            led_count: self.led_count,
+            max_brightness: self.max_brightness,
+            color_order: self.color_order.into_core(),
         }
     }
 }

@@ -30,6 +30,14 @@ discovery_prefix = "homeassistant"
 [availability]
 topic = "plantfriend/PLANTFRIEND_01/availability"
 
+[[leds]]
+id = "status_led"
+kind = "neopixel"
+pin = 8
+led_count = 1
+color_order = "grb"
+max_brightness = 64
+
 [[sensors]]
 id = "liquid_level"
 kind = "xkc_y25"

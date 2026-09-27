@@ -1,7 +1,7 @@
 #[path = "../build_config.rs"]
 mod build_config;
 
-use build_config::SensorRuntimeDriverKind;
+use build_config::{LedRuntimeDriverKind, SensorRuntimeDriverKind};
 
 #[test]
 fn maps_device_sensor_kind_to_generated_runtime_kind() {
@@ -26,5 +26,15 @@ fn rejects_unknown_sensor_kind_with_explicit_error() {
     assert!(
         err.contains("Unsupported sensor kind"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn maps_led_kind_to_generated_runtime_kind() {
+    assert_eq!(
+        LedRuntimeDriverKind::from_device_kind("neopixel")
+            .expect("neopixel kind should map")
+            .generated_led_kind_variant(),
+        "GeneratedLedKind::Neopixel"
     );
 }

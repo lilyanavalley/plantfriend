@@ -15,7 +15,8 @@ default = [
     "framework-ble",
     "framework-wifi-mqtt",
     "sensor-xkc-y25",
-    "sensor-floatswitch"
+    "sensor-floatswitch",
+    "led-neopixel"
 ]
 std = []
 alloc = []
@@ -31,6 +32,7 @@ chip-nrf52 = ["framework-ble"]
 bthome = []
 sensor-xkc-y25 = []
 sensor-floatswitch = []
+led-neopixel = []
 homeassistant-mqtt = ["framework-wifi-mqtt-base", "dep:serde", "dep:serde_json"]
 
 # Internal foundational layer for MQTT topic and availability semantics.

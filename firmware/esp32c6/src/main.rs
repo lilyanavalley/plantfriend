@@ -8,6 +8,7 @@
 //          → event loop: poll sensor, publish on change or heartbeat
 
 mod config;
+mod indicator;
 mod mqtt;
 mod ota;
 mod sensor;
@@ -26,10 +27,12 @@ use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
 use log::{error, info, warn};
+use plantfriend_core::outputs::{DeviceRuntimeStatus, PlantHealthSignal};
 use plantfriend_core::publish::{MonotonicClock, PublishReason, StatePublishPolicy};
 use plantfriend_core::sensors::{FloatSwitchState, LiquidState};
 
 use config::{Config, GeneratedSensorKind, GeneratedSensorRuntimeSpec};
+use indicator::StatusIndicatorHub;
 use mqtt::MqttManager;
 use sensor::{FloatSwitchSensor, LiquidLevelSensor};
 
@@ -47,6 +50,17 @@ enum ActiveSensor<'d> {
 }
 
 impl<'d> ActiveSensor<'d> {
+    fn suggests_needs_water(&self) -> Option<bool> {
+        match self {
+            ActiveSensor::XkcY25 { sensor, .. } => {
+                Some(matches!(sensor.state(), LiquidState::Absent))
+            }
+            ActiveSensor::BasicFloat { sensor, .. } => {
+                Some(matches!(sensor.state(), FloatSwitchState::Open))
+            }
+        }
+    }
+
     fn publish_initial(&mut self, mqtt: &mut MqttManager) -> Result<()> {
         match self {
             ActiveSensor::XkcY25 {
@@ -155,15 +169,27 @@ fn main() -> Result<()> {
 
     // ── Load compile-time configuration ──────────────────────────────────────
     let cfg = Config::load();
+    let uptime_clock = UptimeClock::new();
+    let mut indicators = StatusIndicatorHub::from_specs(cfg.runtime.leds)?;
 
     info!(
         "hydrolevel starting – device: {}, broker: {}",
         cfg.ha.device_id, cfg.mqtt.broker_uri
     );
+    indicators.set_status(
+        DeviceRuntimeStatus::Booting,
+        PlantHealthSignal::Unknown,
+        uptime_clock.now_ms(),
+    )?;
 
     // ── Wi-Fi ─────────────────────────────────────────────────────────────────
     // `_wifi` must remain alive for the duration of the program to keep the
     // Wi-Fi interface active.
+    indicators.set_status(
+        DeviceRuntimeStatus::WifiConnecting,
+        PlantHealthSignal::Unknown,
+        uptime_clock.now_ms(),
+    )?;
     let _wifi = wifi::connect(peripherals.modem, sysloop, nvs, &cfg.wifi)?;
 
     if cfg.ota.auto_apply_on_boot {
@@ -179,6 +205,11 @@ fn main() -> Result<()> {
     }
 
     // ── MQTT ──────────────────────────────────────────────────────────────────
+    indicators.set_status(
+        DeviceRuntimeStatus::BrokerConnecting,
+        PlantHealthSignal::Unknown,
+        uptime_clock.now_ms(),
+    )?;
     let mut mqtt = MqttManager::connect(&cfg)?;
 
     // Give the broker a moment to process the connection before publishing.
@@ -195,8 +226,6 @@ fn main() -> Result<()> {
     } else {
         None
     };
-
-    let uptime_clock = UptimeClock::new();
 
     let mut sensors: Vec<ActiveSensor<'static>> = Vec::with_capacity(cfg.runtime.sensors.len());
     for spec in cfg.runtime.sensors {
@@ -254,6 +283,26 @@ fn main() -> Result<()> {
     loop {
         for runtime in &mut sensors {
             runtime.poll_and_publish_state(&mut mqtt, &uptime_clock);
+        }
+
+        let health = if sensors
+            .iter()
+            .any(|sensor| sensor.suggests_needs_water() == Some(true))
+        {
+            PlantHealthSignal::NeedsWater
+        } else if sensors
+            .iter()
+            .any(|sensor| sensor.suggests_needs_water() == Some(false))
+        {
+            PlantHealthSignal::Healthy
+        } else {
+            PlantHealthSignal::Unknown
+        };
+
+        if let Err(e) =
+            indicators.set_status(DeviceRuntimeStatus::Online, health, uptime_clock.now_ms())
+        {
+            warn!("Failed to update status indicators: {e}");
         }
 
         // Yield to the ESP-IDF scheduler; prevents starving the Wi-Fi/MQTT stack.

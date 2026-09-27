@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 #[path = "build_config.rs"]
 mod build_config;
 
-use build_config::{normalize_optional_str, DeviceToml, SensorRuntimeDriverKind};
+use build_config::{
+    normalize_optional_str, DeviceToml, LedRuntimeDriverKind, SensorRuntimeDriverKind,
+};
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR missing");
@@ -36,8 +38,12 @@ fn main() {
     }
 
     let cfg = load_device_toml(&device_toml_path);
-    build_config::validate_device_toml(&cfg)
-        .unwrap_or_else(|e| panic!("Invalid device.toml at '{}': {e}", device_toml_path.display()));
+    build_config::validate_device_toml(&cfg).unwrap_or_else(|e| {
+        panic!(
+            "Invalid device.toml at '{}': {e}",
+            device_toml_path.display()
+        )
+    });
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR missing"));
 
@@ -148,6 +154,17 @@ fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
     body.push_str("}\n\n");
 
     body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    body.push_str("pub enum GeneratedLedKind {\n");
+    body.push_str("    Neopixel,\n");
+    body.push_str("}\n\n");
+
+    body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    body.push_str("pub enum GeneratedNeopixelColorOrder {\n");
+    body.push_str("    Rgb,\n");
+    body.push_str("    Grb,\n");
+    body.push_str("}\n\n");
+
+    body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
     body.push_str("pub struct GeneratedSensorOutputFlags {\n");
     body.push_str("    pub mqtt: bool,\n");
     body.push_str("    pub homeassistant: bool,\n");
@@ -173,6 +190,16 @@ fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
     body.push_str("    pub ha_device_class: Option<&'static str>,\n");
     body.push_str("}\n\n");
 
+    body.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    body.push_str("pub struct GeneratedLedRuntimeSpec {\n");
+    body.push_str("    pub id: &'static str,\n");
+    body.push_str("    pub kind: GeneratedLedKind,\n");
+    body.push_str("    pub pin: u32,\n");
+    body.push_str("    pub led_count: u16,\n");
+    body.push_str("    pub color_order: GeneratedNeopixelColorOrder,\n");
+    body.push_str("    pub max_brightness: u8,\n");
+    body.push_str("}\n\n");
+
     body.push_str("pub static GENERATED_SENSOR_SPECS: &[GeneratedSensorRuntimeSpec] = &[\n");
     for sensor in &cfg.sensors {
         let kind = SensorRuntimeDriverKind::from_device_kind(sensor.kind.as_str())
@@ -191,11 +218,7 @@ fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
                 format!("Some({})", to_rust_str(&ha.name)),
                 format!("Some({})", to_rust_str(&ha.device_class)),
             ),
-            None => (
-                "None".to_string(),
-                "None".to_string(),
-                "None".to_string(),
-            ),
+            None => ("None".to_string(), "None".to_string(), "None".to_string()),
         };
 
         body.push_str("    GeneratedSensorRuntimeSpec {\n");
@@ -203,12 +226,21 @@ fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
         body.push_str(&format!("        kind: {kind},\n"));
         body.push_str(&format!("        pin: {},\n", sensor.pin));
         body.push_str("        logic: GeneratedDigitalInputConfig {\n");
-        body.push_str(&format!("            active_high: {},\n", sensor.active_high));
-        body.push_str(&format!("            debounce_ms: {},\n", sensor.debounce_ms));
+        body.push_str(&format!(
+            "            active_high: {},\n",
+            sensor.active_high
+        ));
+        body.push_str(&format!(
+            "            debounce_ms: {},\n",
+            sensor.debounce_ms
+        ));
         body.push_str("        },\n");
         body.push_str("        outputs: GeneratedSensorOutputFlags {\n");
         body.push_str(&format!("            mqtt: {},\n", sensor.outputs.mqtt));
-        body.push_str(&format!("            homeassistant: {},\n", sensor.outputs.homeassistant));
+        body.push_str(&format!(
+            "            homeassistant: {},\n",
+            sensor.outputs.homeassistant
+        ));
         body.push_str(&format!("            bthome: {},\n", sensor.outputs.bthome));
         body.push_str("        },\n");
         body.push_str(&format!("        mqtt_state_topic: {mqtt_topic},\n"));
@@ -216,6 +248,33 @@ fn generate_runtime_contract_rs(cfg: &DeviceToml) -> String {
         body.push_str(&format!("        ha_name: {ha_name},\n"));
         body.push_str(&format!("        ha_device_class: {ha_device_class},\n"));
         body.push_str("    },\n");
+    }
+    body.push_str("];\n");
+
+    body.push_str("\n");
+    body.push_str("pub static GENERATED_LED_SPECS: &[GeneratedLedRuntimeSpec] = &[\n");
+    if let Some(leds) = &cfg.leds {
+        for led in leds {
+            let kind = LedRuntimeDriverKind::from_device_kind(led.kind.as_str())
+                .expect("LED kind should already be validated")
+                .generated_led_kind_variant();
+
+            let color_order = match led.color_order.as_deref().unwrap_or("grb") {
+                "rgb" => "GeneratedNeopixelColorOrder::Rgb",
+                _ => "GeneratedNeopixelColorOrder::Grb",
+            };
+
+            let max_brightness = led.max_brightness.unwrap_or(64);
+
+            body.push_str("    GeneratedLedRuntimeSpec {\n");
+            body.push_str(&format!("        id: {},\n", to_rust_str(&led.id)));
+            body.push_str(&format!("        kind: {kind},\n"));
+            body.push_str(&format!("        pin: {},\n", led.pin));
+            body.push_str(&format!("        led_count: {},\n", led.led_count));
+            body.push_str(&format!("        color_order: {color_order},\n"));
+            body.push_str(&format!("        max_brightness: {max_brightness},\n"));
+            body.push_str("    },\n");
+        }
     }
     body.push_str("];\n");
 
@@ -232,9 +291,8 @@ fn generate_device_config_rs(cfg: &DeviceToml, env_vars: &BTreeMap<String, Strin
 
     let ca_cert_path = normalize_optional_str(tls.and_then(|t| t.ca_cert_path.as_deref()))
         .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CA_CERT_PATH"));
-    let client_cert_path =
-        normalize_optional_str(tls.and_then(|t| t.client_cert_path.as_deref()))
-            .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_CERT_PATH"));
+    let client_cert_path = normalize_optional_str(tls.and_then(|t| t.client_cert_path.as_deref()))
+        .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_CERT_PATH"));
     let client_key_path = normalize_optional_str(tls.and_then(|t| t.client_key_path.as_deref()))
         .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_KEY_PATH"));
 
@@ -321,7 +379,10 @@ fn generate_device_config_rs(cfg: &DeviceToml, env_vars: &BTreeMap<String, Strin
         to_rust_str(&cfg.availability.topic)
     ));
 
-    body.push_str(&format!("pub static GEN_SENSOR_GPIO: u32 = {};\n", first_sensor.pin));
+    body.push_str(&format!(
+        "pub static GEN_SENSOR_GPIO: u32 = {};\n",
+        first_sensor.pin
+    ));
     body.push_str(&format!(
         "pub static GEN_SENSOR_ACTIVE_HIGH: bool = {};\n",
         first_sensor.active_high
@@ -348,10 +409,16 @@ fn generate_certs_rs(
         .or_else(|| env_optional(env_vars, "PLANTFRIEND_MQTT_CLIENT_KEY_PATH"));
 
     let ca_cert = read_optional_bytes(manifest_dir, ca_path.as_deref(), "mqtt.tls.ca_cert_path");
-    let client_cert =
-        read_optional_bytes(manifest_dir, cert_path.as_deref(), "mqtt.tls.client_cert_path");
-    let client_key =
-        read_optional_bytes(manifest_dir, key_path.as_deref(), "mqtt.tls.client_key_path");
+    let client_cert = read_optional_bytes(
+        manifest_dir,
+        cert_path.as_deref(),
+        "mqtt.tls.client_cert_path",
+    );
+    let client_key = read_optional_bytes(
+        manifest_dir,
+        key_path.as_deref(),
+        "mqtt.tls.client_key_path",
+    );
 
     assert!(
         client_cert.is_some() == client_key.is_some(),
