@@ -1,13 +1,13 @@
-
 #![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+/// Output devices for PlantFriend status and metrics signaling.
+pub mod outputs;
 /// Sensors of PlantFriend for keeping good care.
 pub mod sensors;
-
 
 pub mod protocol {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +23,7 @@ pub mod capabilities {
     pub const SUPPORTS_BLE: bool = cfg!(feature = "framework-ble");
     pub const SUPPORTS_WIFI_MQTT: bool = cfg!(feature = "framework-wifi-mqtt");
     pub const SUPPORTS_SENSOR_XKC_Y25: bool = cfg!(feature = "sensor-xkc-y25");
+    pub const SUPPORTS_LED_NEOPIXEL: bool = cfg!(feature = "led-neopixel");
 
     pub const CHIP_ESP32_PROFILE: bool = cfg!(feature = "chip-esp32");
     pub const CHIP_NRF52_PROFILE: bool = cfg!(feature = "chip-nrf52");
@@ -120,7 +121,10 @@ pub mod publish {
             None
         }
 
-        pub fn on_tick_with_clock(&mut self, clock: &impl MonotonicClock) -> Option<PublishEvent<S>> {
+        pub fn on_tick_with_clock(
+            &mut self,
+            clock: &impl MonotonicClock,
+        ) -> Option<PublishEvent<S>> {
             self.on_tick(clock.now_ms())
         }
     }
@@ -283,7 +287,10 @@ mod tests {
         assert_eq!(d.update(LiquidState::Present, 0), None);
         assert_eq!(d.update(LiquidState::Present, 50), None);
         assert_eq!(d.update(LiquidState::Present, 99), None);
-        assert_eq!(d.update(LiquidState::Present, 100), Some(LiquidState::Present));
+        assert_eq!(
+            d.update(LiquidState::Present, 100),
+            Some(LiquidState::Present)
+        );
         assert_eq!(d.stable(), LiquidState::Present);
     }
 
@@ -299,7 +306,10 @@ mod tests {
         assert_eq!(d.stable(), LiquidState::Absent);
 
         assert_eq!(d.update(LiquidState::Present, 200), None);
-        assert_eq!(d.update(LiquidState::Present, 301), Some(LiquidState::Present));
+        assert_eq!(
+            d.update(LiquidState::Present, 301),
+            Some(LiquidState::Present)
+        );
     }
 
     #[cfg(feature = "homeassistant-mqtt")]

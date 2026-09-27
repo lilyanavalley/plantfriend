@@ -12,6 +12,7 @@ pub struct DeviceToml {
     pub homeassistant: HomeAssistantSection,
     pub availability: AvailabilitySection,
     pub sensors: Vec<SensorDef>,
+    pub leds: Option<Vec<LedDef>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +91,16 @@ pub struct SensorHomeAssistant {
     pub device_class: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LedDef {
+    pub id: String,
+    pub kind: String,
+    pub pin: u32,
+    pub led_count: u16,
+    pub color_order: Option<String>,
+    pub max_brightness: Option<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SensorRuntimeDriverKind {
     XkcY25,
@@ -111,6 +122,28 @@ impl SensorRuntimeDriverKind {
         match self {
             Self::XkcY25 => "GeneratedSensorKind::XkcY25",
             Self::BasicFloat => "GeneratedSensorKind::BasicFloat",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedRuntimeDriverKind {
+    Neopixel,
+}
+
+impl LedRuntimeDriverKind {
+    pub fn from_device_kind(kind: &str) -> Result<Self, String> {
+        match kind {
+            "neopixel" => Ok(Self::Neopixel),
+            _ => Err(format!(
+                "Unsupported LED kind '{kind}'. Supported kinds: neopixel"
+            )),
+        }
+    }
+
+    pub fn generated_led_kind_variant(self) -> &'static str {
+        match self {
+            Self::Neopixel => "GeneratedLedKind::Neopixel",
         }
     }
 }
@@ -163,7 +196,7 @@ pub fn validate_device_toml(cfg: &DeviceToml) -> Result<(), String> {
     }
 
     let mut sensor_ids = BTreeSet::new();
-    let mut pins = BTreeSet::new();
+    let mut sensor_pins = BTreeSet::new();
 
     for sensor in &cfg.sensors {
         if !sensor_ids.insert(sensor.id.clone()) {
@@ -173,7 +206,7 @@ pub fn validate_device_toml(cfg: &DeviceToml) -> Result<(), String> {
             ));
         }
 
-        if !pins.insert(sensor.pin) {
+        if !sensor_pins.insert(sensor.pin) {
             return Err(format!(
                 "GPIO pin {} is assigned to multiple sensors",
                 sensor.pin
@@ -195,6 +228,46 @@ pub fn validate_device_toml(cfg: &DeviceToml) -> Result<(), String> {
                     "Sensor '{}' mqtt.state_topic must not be empty",
                     sensor.id
                 ));
+            }
+        }
+
+        if let Some(leds) = &cfg.leds {
+            let mut led_ids = BTreeSet::new();
+            let mut led_pins = BTreeSet::new();
+
+            for led in leds {
+                if !led_ids.insert(led.id.clone()) {
+                    return Err(format!("Duplicate LED id '{}' in [[leds]]", led.id));
+                }
+
+                if !led_pins.insert(led.pin) {
+                    return Err(format!("GPIO pin {} is assigned to multiple LEDs", led.pin));
+                }
+
+                if sensor_pins.contains(&led.pin) {
+                    return Err(format!(
+                        "GPIO pin {} cannot be shared between [[sensors]] and [[leds]]",
+                        led.pin
+                    ));
+                }
+
+                LedRuntimeDriverKind::from_device_kind(led.kind.as_str())?;
+
+                if led.led_count == 0 {
+                    return Err(format!("LED '{}' led_count must be >= 1", led.id));
+                }
+
+                if let Some(order) = led.color_order.as_deref() {
+                    match order {
+                        "rgb" | "grb" => {}
+                        _ => {
+                            return Err(format!(
+                                "LED '{}' color_order '{}' is unsupported. Use 'rgb' or 'grb'",
+                                led.id, order
+                            ));
+                        }
+                    }
+                }
             }
         }
 
@@ -250,7 +323,9 @@ pub fn normalize_optional_str(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_device_toml, validate_device_toml, SensorRuntimeDriverKind};
+    use super::{
+        parse_device_toml, validate_device_toml, LedRuntimeDriverKind, SensorRuntimeDriverKind,
+    };
 
     const VALID_CONFIG: &str = r#"
 schema_version = 1
@@ -358,5 +433,26 @@ device_class = "moisture"
             err.contains("Unsupported sensor kind"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn led_kind_maps_to_runtime_driver_variants() {
+        assert_eq!(
+            LedRuntimeDriverKind::from_device_kind("neopixel")
+                .expect("neopixel should map")
+                .generated_led_kind_variant(),
+            "GeneratedLedKind::Neopixel"
+        );
+    }
+
+    #[test]
+    fn led_pin_collision_with_sensor_fails_validation() {
+        let config = format!(
+            "{}\n[[leds]]\nid = \"status\"\nkind = \"neopixel\"\npin = 4\nled_count = 1\n",
+            VALID_CONFIG
+        );
+        let cfg = parse_device_toml(&config).expect("test TOML should parse");
+        let err = validate_device_toml(&cfg).expect_err("sensor+led pin collision should fail");
+        assert!(err.contains("cannot be shared"), "unexpected error: {err}");
     }
 }
