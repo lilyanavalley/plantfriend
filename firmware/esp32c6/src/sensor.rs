@@ -13,6 +13,7 @@
 // modules without modifying this file.
 
 use std::time::Instant;
+use std::fmt::Debug;
 
 use esp_idf_svc::hal::gpio::{AnyInputPin, Input, PinDriver, Pull};
 use log::debug;
@@ -24,7 +25,7 @@ use plantfriend_core::sensors::{
 /// Generic driver for digital input sensors with debounced binary state.
 pub struct DigitalInputSensor<'d, S>
 where
-    S: DigitalSignalState,
+    S: DigitalSignalState + Debug,
 {
     pin: PinDriver<'d, Input>,
     active_high: bool,
@@ -34,7 +35,7 @@ where
 
 impl<'d, S> DigitalInputSensor<'d, S>
 where
-    S: DigitalSignalState,
+    S: DigitalSignalState + Debug,
 {
     /// Initialise the sensor driver from explicit digital input logic settings.
     pub fn new_with_logic(

@@ -15,7 +15,7 @@ include!(concat!(env!("OUT_DIR"), "/certs.rs"));
 include!(concat!(env!("OUT_DIR"), "/generated_device_config.rs"));
 include!(concat!(env!("OUT_DIR"), "/runtime_contract.rs"));
 
-use plantfriend_core::sensors::DigitalInputLiquidSensorConfig;
+use plantfriend_core::sensors::DigitalInputSensorConfig;
 
 /// Top-level configuration bundle available throughout the firmware.
 pub struct Config {
@@ -67,7 +67,7 @@ pub struct SensorConfig {
     /// GPIO number wired to the sensor's OUTPUT pin.
     pub gpio_pin: u32,
     /// Shared digital-input sensor behavior used across firmware targets.
-    pub logic: DigitalInputLiquidSensorConfig,
+    pub logic: DigitalInputSensorConfig,
 }
 
 /// State-publishing timing.
@@ -132,7 +132,7 @@ impl Config {
             },
             sensor: SensorConfig {
                 gpio_pin: GEN_SENSOR_GPIO,
-                logic: DigitalInputLiquidSensorConfig {
+                logic: DigitalInputSensorConfig {
                     active_high: GEN_SENSOR_ACTIVE_HIGH,
                     debounce_ms: GEN_SENSOR_DEBOUNCE_MS,
                 },

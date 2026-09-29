@@ -10,7 +10,13 @@ name = "plantfriend_core"
 path = "src/lib.rs"
 
 [features]
-default = ["std", "framework-ble", "framework-wifi-mqtt", "sensor-xkc-y25", "sensor-floatswitch"]
+default = [
+    "std",
+    "framework-ble",
+    "framework-wifi-mqtt",
+    "sensor-xkc-y25",
+    "sensor-floatswitch"
+]
 std = []
 alloc = []
 
