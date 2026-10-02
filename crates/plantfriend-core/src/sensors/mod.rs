@@ -150,6 +150,7 @@ impl DigitalSignalState for LiquidState {
     }
 }
 
+// * Currently unused, for a future implementation of a light/UV sensor.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LightLux(pub f32);
 
